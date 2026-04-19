@@ -201,6 +201,88 @@ def create_emulator_with_metadata(
     return scripted_model
 
 
+class VerticalLinearEmulator(nn.Module):
+    """
+    Vertical emulator for testing TorchBalance vertical emulators.
+
+    Uses a constant diagonal Jacobian: J[k_out, k_in] = diag_value if k_out == k_in else 0.
+    jac_physical returns [nnodes, n_out_levels, n_in_levels] as required by setupVerticalEmulator.
+    No input_levels / output_levels attributes — the C++ reads level counts from Atlas field shapes.
+    """
+
+    def __init__(self, n_out_levels: int, n_in_levels: int, diag_value: float = 0.5):
+        super().__init__()
+        jac = torch.zeros(n_out_levels, n_in_levels)
+        for k in range(min(n_out_levels, n_in_levels)):
+            jac[k, k] = diag_value
+        self.register_buffer('jac_matrix', jac)
+        self.n_out_levels = n_out_levels
+        self.n_in_levels = n_in_levels
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        return torch.matmul(inputs, self.jac_matrix.t())
+
+    @torch.jit.export
+    def jac_physical(self, inputs: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """
+        Returns the Jacobian tensor of shape [nnodes, n_out_levels, n_in_levels].
+        The mask [nnodes, 1] is broadcast over all level pairs.
+        """
+        nnodes = inputs.shape[0]
+        jac = self.jac_matrix.unsqueeze(0).expand(nnodes, -1, -1).clone()
+        mask_expanded = mask.unsqueeze(2).expand(-1, self.n_out_levels, self.n_in_levels)
+        return jac * mask_expanded
+
+
+def create_vertical_emulator_with_metadata(
+    output_var_name,
+    input_var_names,
+    n_out_levels,
+    n_in_levels,
+    diag_value=0.5,
+    output_path="vertical_emulator.ts"
+):
+    """
+    Create a TorchScript vertical emulator for TorchBalance vertical emulator tests.
+
+    The emulator has a constant diagonal Jacobian. No input_levels / output_levels
+    attributes are stored — setupVerticalEmulator derives level counts from Atlas fields.
+    """
+    model = VerticalLinearEmulator(n_out_levels=n_out_levels,
+                                   n_in_levels=n_in_levels,
+                                   diag_value=diag_value)
+    model.eval()
+
+    class VerticalEmulatorWithMetadata(torch.nn.Module):
+        def __init__(self, inner, input_names, output_names):
+            super().__init__()
+            self.model = inner
+            self.input_names = torch.jit.Attribute(input_names, List[str])
+            self.output_names = torch.jit.Attribute(output_names, List[str])
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return self.model(x)
+
+        @torch.jit.export
+        def jac_physical(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+            return self.model.jac_physical(x, mask)
+
+    wrapper = VerticalEmulatorWithMetadata(
+        model,
+        input_names=input_var_names,
+        output_names=[output_var_name],
+    )
+    scripted = torch.jit.script(wrapper)
+    scripted.save(output_path)
+
+    print(f"Created vertical emulator: {output_path}")
+    print(f"  Output variable: {output_var_name} ({n_out_levels} levels)")
+    print(f"  Input variables: {input_var_names} ({n_in_levels} levels each)")
+    print(f"  Jacobian: diagonal {diag_value}")
+
+    return scripted
+
+
 def create_test_suite():
     """
     Create a complete test suite with multiple emulators.
@@ -297,9 +379,23 @@ if __name__ == "__main__":
     )
     print()
 
+    # Vertical emulator: sea_water_salinity from sea_water_potential_temperature
+    # Diagonal Jacobian 0.5 over 4 levels (matches CS-LFR-15 / 4-level test geometry)
+    create_vertical_emulator_with_metadata(
+        output_var_name="sea_water_salinity",
+        input_var_names=["sea_water_potential_temperature"],
+        n_out_levels=4,
+        n_in_levels=4,
+        diag_value=0.5,
+        output_path=str(output_dir / "vertical_emulator.ts")
+    )
+    print()
+
     print("\nTest suite created!")
-    print("\nExpected matrix structure:")
+    print("\nExpected matrix structure (surface):")
     print("                       sst    qv    tair")
     print("  sst                [  I    0.1   0.4  ]")
     print("  qv                 [  0     I     0   ]")
     print("  tair               [ 0.3   0.2    I   ]")
+    print("\nVertical emulator (sea_water_salinity w.r.t. sea_water_potential_temperature):")
+    print("  J = 0.5 * I  (diagonal, 4x4)")

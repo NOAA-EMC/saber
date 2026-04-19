@@ -35,4 +35,22 @@ std::map<std::string, std::pair<int, int>> setupEmulator(const oops::FieldSet3D 
                                                          const std::string & maskVariable = "",
                                                          int maskLevel = 0);
 
+/// Setup vertical Torch emulator: full-column input profiles, multi-level Jacobian output.
+/// Level counts are determined from Atlas field shapes in xb — no input_levels/output_levels
+/// TorchScript attributes required. jac_physical must return [nnodes, nOutputLevels, nTotalInputLevels].
+/// \param xb Trajectory
+/// \param comm MPI communicator
+/// \param torchscript_path Path to TorchScript model file
+/// \param jacFieldSet Output Jacobian fields, each allocated [nnodes, nOutputLevels * nInputLevels]
+/// \param maskVariable Optional masking variable name (empty string if no masking)
+/// \param maskLevel Optional masking variable level (ignored if maskVariable is empty)
+/// \return Map of Jacobian field names to (nInputLevels, nOutputLevels) pairs
+std::map<std::string, std::pair<int, int>> setupVerticalEmulator(
+    const oops::FieldSet3D & xb,
+    const eckit::mpi::Comm & comm,
+    const std::string & torchscript_path,
+    atlas::FieldSet & jacFieldSet,
+    const std::string & maskVariable = "",
+    int maskLevel = 0);
+
 }  // namespace saber

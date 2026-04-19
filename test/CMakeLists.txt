@@ -198,19 +198,11 @@ if( ENABLE_QUENCH )
       if(NOT EXISTS ${VENV_PYTHON})
           message( STATUS "Creating virtual environment for TorchBalance tests..." )
           execute_process(
-              COMMAND ${Python3_EXECUTABLE} -m venv ${VENV_DIR}
+              COMMAND ${Python3_EXECUTABLE} -m venv --system-site-packages ${VENV_DIR}
               RESULT_VARIABLE VENV_RESULT
           )
           if(NOT VENV_RESULT EQUAL 0)
               message( FATAL_ERROR "Failed to create virtual environment" )
-          endif()
-
-          execute_process(
-              COMMAND ${VENV_DIR}/bin/pip install torch
-              RESULT_VARIABLE PIP_RESULT
-          )
-          if(NOT PIP_RESULT EQUAL 0)
-              message( FATAL_ERROR "Failed to install PyTorch in virtual environment" )
           endif()
       endif()
 
