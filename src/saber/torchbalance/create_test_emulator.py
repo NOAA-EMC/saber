@@ -349,7 +349,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Derive output directory from the provided path
-    output_dir = Path(args.output).parent
+    output_dir = Path(args.output)
 
     # Create a complete test suite with multiple emulators
     print("Creating test suite of emulators...\n")

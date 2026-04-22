@@ -7,6 +7,7 @@ geometry:
   groups:
   - variables:
     - sea_water_potential_temperature
+    - sea_water_salinity
     - air_temperature
     - water_vapor_mixing_ratio_wrt_moist_air
     levels: 4
@@ -15,6 +16,7 @@ background:
   date: 2010-01-01T12:00:00Z
   state variables:
   - sea_water_potential_temperature
+  - sea_water_salinity
   - air_temperature
   - water_vapor_mixing_ratio_wrt_moist_air
 
@@ -26,15 +28,20 @@ background error:
     save jacobians: true
     surface emulators:
     - name: sea_water_potential_temperature
-      path: ./testdata/sst_emulator.ts
+      path: ./testdata/dirac_torchbalance/sst_emulator.ts
       jacobian wrt:
       - air_temperature
       - water_vapor_mixing_ratio_wrt_moist_air
     - name: air_temperature
-      path: ./testdata/air_temperature_emulator.ts
+      path: ./testdata/dirac_torchbalance/air_temperature_emulator.ts
       jacobian wrt:
       - sea_water_potential_temperature
       - water_vapor_mixing_ratio_wrt_moist_air
+    vertical emulators:
+    - name: sea_water_salinity
+      path: ./testdata/dirac_torchbalance/vertical_emulator.ts
+      jacobian wrt:
+      - sea_water_potential_temperature
   saber central block:
     saber block name: ID
 

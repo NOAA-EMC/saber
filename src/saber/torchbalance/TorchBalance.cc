@@ -8,7 +8,8 @@
 
 #include "saber/torchbalance/TorchBalance.h"
 
-#include "saber/torchbalance/TorchBalanceEmulator.h"
+#include "saber/torchbalance/TorchBalanceSurfaceEmulator.h"
+#include "saber/torchbalance/TorchBalanceVerticalEmulator.h"
 
 #include "atlas/array.h"
 
@@ -107,9 +108,9 @@ TorchBalance::TorchBalance(
     for (const auto& inputVar : jacWrt)
       emulatorJacFieldSet.add(jac_["d" + emulatorName + "_div_d" + inputVar]);
 
-    auto emulatorLevelMetadata = setupEmulator(xb, outerGeometryData.comm(),
-                                               emulatorPath, emulatorJacFieldSet,
-                                               maskVariable, maskLevel);
+    auto emulatorLevelMetadata = setupSurfaceEmulator(xb, outerGeometryData.comm(),
+                              emulatorPath, emulatorJacFieldSet,
+                              maskVariable, maskLevel);
 
     // Surface: denominator_level and numerator_level from emulator;
     //          nInputLevels = nOutputLevels = 1
