@@ -111,7 +111,8 @@ TorchBalance::TorchBalance(
                                                emulatorPath, emulatorJacFieldSet,
                                                maskVariable, maskLevel);
 
-    // Surface: denominator_level and numerator_level from emulator; nInputLevels = nOutputLevels = 1
+    // Surface: denominator_level and numerator_level from emulator;
+    //          nInputLevels = nOutputLevels = 1
     for (const auto& entry : emulatorLevelMetadata) {
       jacLevelMetadata_[entry.first] = {entry.second.first, entry.second.second, 1, 1};
       oops::Log::info() << "  surface Jacobian " << entry.first

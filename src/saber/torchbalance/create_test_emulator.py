@@ -223,14 +223,20 @@ class VerticalLinearEmulator(nn.Module):
         return torch.matmul(inputs, self.jac_matrix.t())
 
     @torch.jit.export
-    def jac_physical(self, inputs: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def jac_physical(self, inputs: torch.Tensor, mask: torch.Tensor,
+                     requested_col_indices: torch.Tensor) -> torch.Tensor:
         """
-        Returns the Jacobian tensor of shape [nnodes, n_out_levels, n_in_levels].
-        The mask [nnodes, 1] is broadcast over all level pairs.
+        Returns only the requested Jacobian columns: [nnodes, n_out_levels, len(requested)].
+
+        requested_col_indices: 1-D int64 tensor of column indices into the full input
+        level dimension (nTotalInputLevels).  Passing the full range is equivalent to
+        the old all-columns behaviour.
         """
         nnodes = inputs.shape[0]
-        jac = self.jac_matrix.unsqueeze(0).expand(nnodes, -1, -1).clone()
-        mask_expanded = mask.unsqueeze(2).expand(-1, self.n_out_levels, self.n_in_levels)
+        n_req = requested_col_indices.shape[0]
+        req_jac = self.jac_matrix[:, requested_col_indices]  # [n_out_levels, n_req]
+        jac = req_jac.unsqueeze(0).expand(nnodes, -1, -1).clone()
+        mask_expanded = mask.unsqueeze(2).expand(-1, self.n_out_levels, n_req)
         return jac * mask_expanded
 
 
@@ -264,8 +270,9 @@ def create_vertical_emulator_with_metadata(
             return self.model(x)
 
         @torch.jit.export
-        def jac_physical(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-            return self.model.jac_physical(x, mask)
+        def jac_physical(self, x: torch.Tensor, mask: torch.Tensor,
+                         requested_col_indices: torch.Tensor) -> torch.Tensor:
+            return self.model.jac_physical(x, mask, requested_col_indices)
 
     wrapper = VerticalEmulatorWithMetadata(
         model,
@@ -397,5 +404,13 @@ if __name__ == "__main__":
     print("  sst                [  I    0.1   0.4  ]")
     print("  qv                 [  0     I     0   ]")
     print("  tair               [ 0.3   0.2    I   ]")
+    print()
     print("\nVertical emulator (sea_water_salinity w.r.t. sea_water_potential_temperature):")
-    print("  J = 0.5 * I  (diagonal, 4x4)")
+    print("  J_sal_temp = 0.5 * I_4  (4x4 diagonal Jacobian block)")
+    print()
+    print("  Full K operator is 8x8, partitioned by variable (temp: levels 0-3, sal: levels 0-3):")
+    print()
+    print("              temp (4 lvls)   sal (4 lvls)")
+    print("  temp (4 lvls) [    I_4           0     ]")
+    print("  sal (4 lvls) [  0.5*I_4         I_4   ]")
+    print()

@@ -37,7 +37,8 @@ std::map<std::string, std::pair<int, int>> setupEmulator(const oops::FieldSet3D 
 
 /// Setup vertical Torch emulator: full-column input profiles, multi-level Jacobian output.
 /// Level counts are determined from Atlas field shapes in xb — no input_levels/output_levels
-/// TorchScript attributes required. jac_physical must return [nnodes, nOutputLevels, nTotalInputLevels].
+/// TorchScript attributes required.
+/// jac_physical must return [nnodes, nOutputLevels, nTotalInputLevels].
 /// \param xb Trajectory
 /// \param comm MPI communicator
 /// \param torchscript_path Path to TorchScript model file
