@@ -206,7 +206,7 @@ class VerticalLinearEmulator(nn.Module):
     Vertical emulator for testing TorchBalance vertical emulators.
 
     Uses a constant diagonal Jacobian: J[k_out, k_in] = diag_value if k_out == k_in else 0.
-    jac_physical returns [nnodes, n_out_levels, n_in_levels] as required by setupVerticalEmulator.
+    jac_physical returns [nnodes, nRequestedPairs] as required by setupVerticalEmulator.
     No input_levels / output_levels attributes — the C++ reads level counts from Atlas field shapes.
     """
 
@@ -224,20 +224,19 @@ class VerticalLinearEmulator(nn.Module):
 
     @torch.jit.export
     def jac_physical(self, inputs: torch.Tensor, mask: torch.Tensor,
+                     requested_row_indices: torch.Tensor,
                      requested_col_indices: torch.Tensor) -> torch.Tensor:
         """
-        Returns only the requested Jacobian columns: [nnodes, n_out_levels, len(requested)].
+        Returns only requested Jacobian entries: [nnodes, nRequestedPairs].
 
-        requested_col_indices: 1-D int64 tensor of column indices into the full input
-        level dimension (nTotalInputLevels).  Passing the full range is equivalent to
-        the old all-columns behaviour.
+        requested_row_indices: 1-D int64 tensor of output level indices.
+        requested_col_indices: 1-D int64 tensor of input level indices into the full input
+        level dimension.
         """
         nnodes = inputs.shape[0]
-        n_req = requested_col_indices.shape[0]
-        req_jac = self.jac_matrix[:, requested_col_indices]  # [n_out_levels, n_req]
-        jac = req_jac.unsqueeze(0).expand(nnodes, -1, -1).clone()
-        mask_expanded = mask.unsqueeze(2).expand(-1, self.n_out_levels, n_req)
-        return jac * mask_expanded
+        req_jac = self.jac_matrix[requested_row_indices, requested_col_indices]
+        jac = req_jac.unsqueeze(0).expand(nnodes, -1).clone()
+        return jac * mask
 
 
 def create_vertical_emulator_with_metadata(
@@ -271,8 +270,9 @@ def create_vertical_emulator_with_metadata(
 
         @torch.jit.export
         def jac_physical(self, x: torch.Tensor, mask: torch.Tensor,
+                         requested_row_indices: torch.Tensor,
                          requested_col_indices: torch.Tensor) -> torch.Tensor:
-            return self.model.jac_physical(x, mask, requested_col_indices)
+            return self.model.jac_physical(x, mask, requested_row_indices, requested_col_indices)
 
     wrapper = VerticalEmulatorWithMetadata(
         model,

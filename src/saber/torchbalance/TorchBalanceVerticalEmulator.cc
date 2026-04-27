@@ -11,6 +11,7 @@
 #include <torch/script.h>
 #include <torch/torch.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -53,6 +54,11 @@ std::map<std::string, std::pair<int, int>> setupVerticalEmulator(
         "setupVerticalEmulator: expected exactly 1 output variable, got "
         + std::to_string(outputNames.size()));
   }
+  if (!xb.has(outputNames[0])) {
+    throw std::runtime_error(
+        "setupVerticalEmulator: missing required output field: " + outputNames[0]);
+  }
+  const int nOutputLevels = xb[outputNames[0]].shape(1);
 
   // Prepare input views; determine level count and offset for each input variable
   std::vector<atlas::array::ArrayView<double, 2>> inputViews;
@@ -116,21 +122,20 @@ std::map<std::string, std::pair<int, int>> setupVerticalEmulator(
   }
 
   // Resolve each requested Jacobian field to its model input variable, and build
-  // the flat list of column indices (level indices into the full input) to pass to
-  // jac_physical. The model will return only these columns, avoiding computation
-  // and allocation for level blocks that are not needed.
+  // the compact list of row/column pairs to pass to jac_physical.
   std::map<std::string, int> inputNameToIdx;
   for (int i = 0; i < inputSize; ++i)
     inputNameToIdx[emulatorVarInputs[i].name()] = i;
 
   struct FieldRequest {
     atlas::Field field;
-    int inputVarIdx;
     int nInputLevels;
-    int reqColOffset;  // starting column index within the (narrowed) returned Jacobian tensor
+    int nStoredLevels;
+    int reqPairOffset;  // starting pair index within the returned compact Jacobian tensor
   };
   std::vector<FieldRequest> fieldRequests;
 
+  std::vector<int64_t> requestedRowIndices;
   std::vector<int64_t> requestedColIndices;
   for (auto& jacField : jacFieldSet) {
     const std::string& fieldName = jacField.name();
@@ -148,52 +153,49 @@ std::map<std::string, std::pair<int, int>> setupVerticalEmulator(
     const int inputVarIdx  = it->second;
     const int levelOffset  = inputLevelOffsets[inputVarIdx];
     const int nInputLevels = nLevelsPerInput[inputVarIdx];
+    const int nStoredLevels = static_cast<int>(jacField.shape(1));
 
     FieldRequest fr;
     fr.field        = jacField;
-    fr.inputVarIdx  = inputVarIdx;
     fr.nInputLevels = nInputLevels;
-    fr.reqColOffset = static_cast<int>(requestedColIndices.size());
+    fr.nStoredLevels = nStoredLevels;
+    fr.reqPairOffset = static_cast<int>(requestedColIndices.size());
     fieldRequests.push_back(fr);
 
-    // Append the level indices for this variable to the request list
-    for (int k = 0; k < nInputLevels; ++k)
+    for (int k = 0; k < nStoredLevels; ++k) {
+      requestedRowIndices.push_back(nOutputLevels == 1 ? 0 : k);
       requestedColIndices.push_back(levelOffset + k);
+    }
   }
 
   oops::Log::info() << "setupVerticalEmulator: requesting "
-                    << requestedColIndices.size() << " of " << nTotalInputLevels
-                    << " input level columns" << std::endl;
+                    << requestedColIndices.size() << " compact row/column pairs" << std::endl;
 
-  // Call jac_physical(inputs, mask, requested_col_indices).
-  // Returns only the requested Jacobian columns: [nnodes, nOutputLevels, requestedColIndices.size()]
+  // Call jac_physical(inputs, mask, requested_row_indices, requested_col_indices).
+  // Returns only the requested compact Jacobian entries: [nnodes, nRequestedPairs].
+  torch::Tensor reqRowTensor = torch::tensor(requestedRowIndices, torch::kLong);
   torch::Tensor reqColTensor = torch::tensor(requestedColIndices, torch::kLong);
-  std::vector<torch::jit::IValue> inputs_vec{inputs, mask, reqColTensor};
+  std::vector<torch::jit::IValue> inputs_vec{inputs, mask, reqRowTensor, reqColTensor};
   torch::Tensor jac = module.get_method("jac_physical")(inputs_vec).toTensor();
 
-  const int nOutputLevels    = static_cast<int>(jac.size(1));
-  const int nRequestedCols   = static_cast<int>(requestedColIndices.size());
+  const int nRequestedPairs = static_cast<int>(requestedColIndices.size());
   oops::Log::info() << "setupVerticalEmulator: nOutputLevels=" << nOutputLevels << std::endl;
 
-  if (jac.size(2) != nRequestedCols) {
+  if (jac.dim() != 2 || jac.size(1) != nRequestedPairs) {
     throw std::runtime_error(
-        "setupVerticalEmulator: jac_physical returned " + std::to_string(jac.size(2))
-        + " input level columns but expected " + std::to_string(nRequestedCols));
+        "setupVerticalEmulator: jac_physical must return [nnodes, "
+        + std::to_string(nRequestedPairs) + "] compact entries");
   }
 
-  auto jac_accessor = jac.accessor<float, 3>();
+  auto jac_accessor = jac.accessor<float, 2>();
   std::map<std::string, std::pair<int, int>> levelMetadata;
 
-  // Unpack: each field's block starts at fr.reqColOffset within the returned tensor
+  // Unpack: each field's compact block starts at fr.reqPairOffset.
   for (auto& fr : fieldRequests) {
     auto jac_view = atlas::array::make_view<double, 2>(fr.field);
     for (atlas::idx_t jnode = 0; jnode < nnodes; ++jnode) {
-      for (int k_out = 0; k_out < nOutputLevels; ++k_out) {
-        for (int k_in = 0; k_in < fr.nInputLevels; ++k_in) {
-          jac_view(jnode, k_out * fr.nInputLevels + k_in) =
-            static_cast<double>(jac_accessor[jnode][k_out][fr.reqColOffset + k_in]);
-        }
-      }
+      for (int k = 0; k < fr.nStoredLevels; ++k)
+        jac_view(jnode, k) = static_cast<double>(jac_accessor[jnode][fr.reqPairOffset + k]);
     }
     fr.field.haloExchange();
 

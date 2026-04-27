@@ -20,14 +20,16 @@
 
 namespace saber {
 
-/// Setup vertical Torch emulator: full-column input profiles, multi-level Jacobian output.
+/// Setup vertical Torch emulator: full-column input profiles, compact vertical Jacobian output.
 /// Level counts are determined from Atlas field shapes in xb - no input_levels/output_levels
 /// TorchScript attributes required.
-/// jac_physical must return [nnodes, nOutputLevels, nTotalInputLevels].
+/// jac_physical must accept (inputs, mask, requested_row_indices, requested_col_indices) and
+/// return [nnodes, nRequestedPairs], one value per requested row/column pair.
 /// \param xb Trajectory
 /// \param comm MPI communicator
 /// \param torchscript_path Path to TorchScript model file
-/// \param jacFieldSet Output Jacobian fields, each allocated [nnodes, nOutputLevels * nInputLevels]
+/// \param jacFieldSet Output Jacobian fields, each allocated with compact vertical levels:
+///        nInputLevels for single-level outputs, otherwise min(nOutputLevels, nInputLevels).
 /// \param maskVariable Optional masking variable name (empty string if no masking)
 /// \param maskLevel Optional masking variable level (ignored if maskVariable is empty)
 /// \return Map of Jacobian field names to (nInputLevels, nOutputLevels) pairs

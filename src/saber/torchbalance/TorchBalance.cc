@@ -11,6 +11,8 @@
 #include "saber/torchbalance/TorchBalanceSurfaceEmulator.h"
 #include "saber/torchbalance/TorchBalanceVerticalEmulator.h"
 
+#include <algorithm>
+
 #include "atlas/array.h"
 
 #include "oops/util/FieldSetHelpers.h"
@@ -52,7 +54,7 @@ TorchBalance::TorchBalance(
     }
   }
 
-  // Vertical emulators: Jacobian has nOutputLevels * nInputLevels levels per field
+  // Vertical emulators: compact vertical-block Jacobian.
   if (params.verticalEmulators.value() != boost::none) {
     for (const auto& emulator : *params.verticalEmulators.value()) {
       const std::string& emulatorName = emulator.name.value();
@@ -70,7 +72,8 @@ TorchBalance::TorchBalance(
         }
         const int nInputLevels = xb[inputVar].shape(1);
         jacStr.push_back("d" + emulatorName + "_div_d" + inputVar);
-        jacLevels.push_back(nOutputLevels * nInputLevels);
+        jacLevels.push_back(nOutputLevels == 1 ? nInputLevels :
+                            std::min(nOutputLevels, nInputLevels));
       }
     }
   }
@@ -220,13 +223,21 @@ void TorchBalance::multiply(oops::FieldSet3D & fset) const {
                          << jacName << " * d" << denominator << std::endl;
       const int nnodes = jac_[jacName].shape(0);
 
-      for (atlas::idx_t jnode = 0; jnode < nnodes; ++jnode) {
-        if (ghostView(jnode) > 0) continue;
-        for (int k_out = 0; k_out < nOutputLevels; ++k_out)
-          for (int k_in = 0; k_in < nInputLevels; ++k_in)
-            var_view(jnode, numerator_level + k_out) +=
-              jac_view(jnode, k_out * nInputLevels + k_in)
-              * denominator_view(jnode, denominator_level + k_in);
+      if (nOutputLevels == 1) {
+        for (atlas::idx_t jnode = 0; jnode < nnodes; ++jnode) {
+          if (ghostView(jnode) > 0) continue;
+          for (int k = 0; k < nInputLevels; ++k)
+            var_view(jnode, numerator_level) +=
+              jac_view(jnode, k) * denominator_view(jnode, denominator_level + k);
+        }
+      } else {
+        const int nDiagonalLevels = std::min(nOutputLevels, nInputLevels);
+        for (atlas::idx_t jnode = 0; jnode < nnodes; ++jnode) {
+          if (ghostView(jnode) > 0) continue;
+          for (int k = 0; k < nDiagonalLevels; ++k)
+            var_view(jnode, numerator_level + k) +=
+              jac_view(jnode, k) * denominator_view(jnode, denominator_level + k);
+        }
       }
     }
   }
@@ -278,13 +289,21 @@ void TorchBalance::multiplyAD(oops::FieldSet3D & fset) const {
                          << jacName << " * d" << numerator << std::endl;
 
       const int nnodes = jac_[jacName].shape(0);
-      for (atlas::idx_t jnode = 0; jnode < nnodes; ++jnode) {
-        if (ghostView(jnode) > 0) continue;
-        for (int k_out = 0; k_out < nOutputLevels; ++k_out)
-          for (int k_in = 0; k_in < nInputLevels; ++k_in)
-            var_view(jnode, denominator_level + k_in) +=
-              jac_view(jnode, k_out * nInputLevels + k_in)
-              * numerator_view(jnode, numerator_level + k_out);
+      if (nOutputLevels == 1) {
+        for (atlas::idx_t jnode = 0; jnode < nnodes; ++jnode) {
+          if (ghostView(jnode) > 0) continue;
+          for (int k = 0; k < nInputLevels; ++k)
+            var_view(jnode, denominator_level + k) +=
+              jac_view(jnode, k) * numerator_view(jnode, numerator_level);
+        }
+      } else {
+        const int nDiagonalLevels = std::min(nOutputLevels, nInputLevels);
+        for (atlas::idx_t jnode = 0; jnode < nnodes; ++jnode) {
+          if (ghostView(jnode) > 0) continue;
+          for (int k = 0; k < nDiagonalLevels; ++k)
+            var_view(jnode, denominator_level + k) +=
+              jac_view(jnode, k) * numerator_view(jnode, numerator_level + k);
+        }
       }
     }
   }

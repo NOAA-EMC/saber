@@ -104,7 +104,7 @@ class TorchBalance : public SaberOuterBlockBase {
 
   // Store level metadata for each Jacobian field.
   // Surface emulators: nInputLevels = nOutputLevels = 1, specific level indices stored.
-  // Vertical emulators: denominator_level = numerator_level = 0, full column used.
+  // Vertical emulators: denominator_level = numerator_level = 0, compact vertical block used.
   struct JacobianLevels {
     int denominator_level;
     int numerator_level;
