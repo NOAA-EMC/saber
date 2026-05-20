@@ -6,12 +6,11 @@
 * which can be obtained at http://www.apache.org/licenses/LICENSE-2.0.
 */
 
-#include "saber/torchbalance/TorchBalance.h"
+#include <algorithm>
 
+#include "saber/torchbalance/TorchBalance.h"
 #include "saber/torchbalance/TorchBalanceSurfaceEmulator.h"
 #include "saber/torchbalance/TorchBalanceVerticalEmulator.h"
-
-#include <algorithm>
 
 #include "atlas/array.h"
 
