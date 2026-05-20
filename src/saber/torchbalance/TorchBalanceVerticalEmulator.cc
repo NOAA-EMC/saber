@@ -20,6 +20,7 @@
 
 #include "atlas/array.h"
 
+#include "eckit/exception/Exceptions.h"
 #include "oops/base/Variables.h"
 #include "oops/util/Logger.h"
 
@@ -50,13 +51,13 @@ std::map<std::string, std::pair<int, int>> setupVerticalEmulator(
   for (const auto& v : module.attr("output_names").toListRef())
     outputNames.push_back(v.toString()->string());
   if (outputNames.size() != 1) {
-    throw std::runtime_error(
+    throw eckit::Exception(
         "setupVerticalEmulator: expected exactly 1 output variable, got "
-        + std::to_string(outputNames.size()));
+        + std::to_string(outputNames.size()), Here());
   }
   if (!xb.has(outputNames[0])) {
-    throw std::runtime_error(
-        "setupVerticalEmulator: missing required output field: " + outputNames[0]);
+    throw eckit::Exception(
+        "setupVerticalEmulator: missing required output field: " + outputNames[0], Here());
   }
   const int nOutputLevels = xb[outputNames[0]].shape(1);
 
@@ -72,8 +73,8 @@ std::map<std::string, std::pair<int, int>> setupVerticalEmulator(
   for (int i = 0; i < inputSize; ++i) {
     const std::string& varName = emulatorVarInputs[i].name();
     if (!xb.has(varName)) {
-      throw std::runtime_error(
-          "setupVerticalEmulator: missing required input field: " + varName);
+      throw eckit::Exception(
+          "setupVerticalEmulator: missing required input field: " + varName, Here());
     }
     inputViews.push_back(atlas::array::make_view<double, 2>(xb[varName]));
     inputLevelOffsets.push_back(nTotalInputLevels);
@@ -107,10 +108,10 @@ std::map<std::string, std::pair<int, int>> setupVerticalEmulator(
     auto mask_view = atlas::array::make_view<double, 2>(xb[maskVariable]);
     const int mask_nlevels = mask_view.shape(1);
     if (maskLevel < 0 || maskLevel >= mask_nlevels) {
-      throw std::runtime_error(
+      throw eckit::Exception(
           "setupVerticalEmulator: mask level " + std::to_string(maskLevel)
           + " out of bounds for '" + maskVariable + "' with "
-          + std::to_string(mask_nlevels) + " levels");
+          + std::to_string(mask_nlevels) + " levels", Here());
     }
     std::vector<float> maskData;
     maskData.reserve(nnodes);
@@ -182,9 +183,9 @@ std::map<std::string, std::pair<int, int>> setupVerticalEmulator(
   oops::Log::info() << "setupVerticalEmulator: nOutputLevels=" << nOutputLevels << std::endl;
 
   if (jac.dim() != 2 || jac.size(1) != nRequestedPairs) {
-    throw std::runtime_error(
+    throw eckit::Exception(
         "setupVerticalEmulator: jac_physical must return [nnodes, "
-        + std::to_string(nRequestedPairs) + "] compact entries");
+        + std::to_string(nRequestedPairs) + "] compact entries", Here());
   }
 
   auto jac_accessor = jac.accessor<float, 2>();

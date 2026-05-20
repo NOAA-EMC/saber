@@ -17,6 +17,7 @@
 
 #include "atlas/array.h"
 
+#include "eckit/exception/Exceptions.h"
 #include "oops/base/Variables.h"
 #include "oops/util/Logger.h"
 
@@ -85,7 +86,7 @@ std::map<std::string, std::pair<int, int>> setupSurfaceEmulator(
 
   // We're only expecting one output for now
   if (emulatorVarOutputs.size() != 1) {
-    throw std::runtime_error("setupSurfaceEmulator expected exactly 1 output from emulator");
+    throw eckit::Exception("setupSurfaceEmulator expected exactly 1 output from emulator", Here());
   }
 
   // Prepare the input field views
@@ -98,7 +99,7 @@ std::map<std::string, std::pair<int, int>> setupSurfaceEmulator(
     } else {
       std::ostringstream err;
       err << "setupSurfaceEmulator missing required input field: " << varName;
-      throw std::runtime_error(err.str());
+      throw eckit::Exception(err.str(), Here());
     }
   }
 
@@ -113,7 +114,7 @@ std::map<std::string, std::pair<int, int>> setupSurfaceEmulator(
       err << "setupSurfaceEmulator: Input level index out of bounds for variable " << varName
           << ". Requested level " << requested_level << " but variable has "
           << nlevels << " levels.";
-      throw std::runtime_error(err.str());
+      throw eckit::Exception(err.str(), Here());
     }
   }
 
@@ -153,7 +154,7 @@ std::map<std::string, std::pair<int, int>> setupSurfaceEmulator(
       err << "setupSurfaceEmulator: Mask level " << maskLevel
           << " out of bounds for variable '" << maskVariable
           << "' with " << mask_nlevels << " levels";
-      throw std::runtime_error(err.str());
+      throw eckit::Exception(err.str(), Here());
     }
 
     // Collect mask data for all nodes

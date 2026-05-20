@@ -15,6 +15,8 @@
 
 #include "atlas/array.h"
 
+#include "eckit/exception/Exceptions.h"
+
 #include "oops/util/FieldSetHelpers.h"
 
 namespace saber {
@@ -59,16 +61,16 @@ TorchBalance::TorchBalance(
     for (const auto& emulator : *params.verticalEmulators.value()) {
       const std::string& emulatorName = emulator.name.value();
       if (!xb.has(emulatorName)) {
-        throw std::runtime_error(
+        throw eckit::Exception(
             "TorchBalance: vertical emulator output '" + emulatorName
-            + "' not found in background state");
+            + "' not found in background state", Here());
       }
       const int nOutputLevels = xb[emulatorName].shape(1);
       for (const auto& inputVar : emulator.jacobianWrt.value()) {
         if (!xb.has(inputVar)) {
-          throw std::runtime_error(
+          throw eckit::Exception(
               "TorchBalance: vertical emulator input '" + inputVar
-              + "' not found in background state");
+              + "' not found in background state", Here());
         }
         const int nInputLevels = xb[inputVar].shape(1);
         jacStr.push_back("d" + emulatorName + "_div_d" + inputVar);
