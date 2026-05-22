@@ -12,6 +12,8 @@ if( Torch_FOUND )
     TorchBalanceSurfaceEmulator.cc
     TorchBalanceVerticalEmulator.h
     TorchBalanceVerticalEmulator.cc
+    TorchBalanceNonLocalEmulator.h
+    TorchBalanceNonLocalEmulator.cc
     )
 endif()
 

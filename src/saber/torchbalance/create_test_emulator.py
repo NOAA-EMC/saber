@@ -290,6 +290,89 @@ def create_vertical_emulator_with_metadata(
     return scripted
 
 
+class NonLocalEdgeLinearEmulator(nn.Module):
+    """
+    Rank-local non-local emulator for TorchBalance tests.
+
+    The operator maps one input variable to one output variable with a symmetric
+    edge stencil:
+        y_i = self_weight * x_i + edge_weight * sum_{j connected to i} x_j
+    """
+
+    def __init__(self, self_weight: float = 0.25, edge_weight: float = 0.05):
+        super().__init__()
+        self.self_weight = self_weight
+        self.edge_weight = edge_weight
+
+    @torch.jit.export
+    def multiply(self, inputs: List[torch.Tensor],
+                 geometry: List[torch.Tensor],
+                 mask: torch.Tensor) -> List[torch.Tensor]:
+        x = inputs[0]
+        edges = geometry[0]
+        out = self.self_weight * x
+
+        src = edges[:, 0]
+        dst = edges[:, 1]
+        out.index_add_(0, src, self.edge_weight * x.index_select(0, dst))
+        out.index_add_(0, dst, self.edge_weight * x.index_select(0, src))
+        out = out * mask
+        return [out]
+
+    @torch.jit.export
+    def multiply_ad(self, outputs_ad: List[torch.Tensor],
+                    geometry: List[torch.Tensor],
+                    mask: torch.Tensor) -> List[torch.Tensor]:
+        # The test stencil is symmetric, so the adjoint has the same action.
+        return self.multiply(outputs_ad, geometry, mask)
+
+
+def create_nonlocal_emulator_with_metadata(
+    output_var_name,
+    input_var_names,
+    output_path="nonlocal_emulator.ts"
+):
+    """
+    Create a TorchScript non-local emulator for TorchBalance tests.
+    """
+    model = NonLocalEdgeLinearEmulator()
+    model.eval()
+
+    class NonLocalEmulatorWithMetadata(torch.nn.Module):
+        def __init__(self, inner, input_names, output_names):
+            super().__init__()
+            self.model = inner
+            self.input_names = torch.jit.Attribute(input_names, List[str])
+            self.output_names = torch.jit.Attribute(output_names, List[str])
+
+        @torch.jit.export
+        def multiply(self, inputs: List[torch.Tensor],
+                     geometry: List[torch.Tensor],
+                     mask: torch.Tensor) -> List[torch.Tensor]:
+            return self.model.multiply(inputs, geometry, mask)
+
+        @torch.jit.export
+        def multiply_ad(self, outputs_ad: List[torch.Tensor],
+                        geometry: List[torch.Tensor],
+                        mask: torch.Tensor) -> List[torch.Tensor]:
+            return self.model.multiply_ad(outputs_ad, geometry, mask)
+
+    wrapper = NonLocalEmulatorWithMetadata(
+        model,
+        input_names=input_var_names,
+        output_names=[output_var_name],
+    )
+    scripted = torch.jit.script(wrapper)
+    scripted.save(output_path)
+
+    print(f"Created non-local emulator: {output_path}")
+    print(f"  Output variable: {output_var_name}")
+    print(f"  Input variables: {input_var_names}")
+    print("  Stencil: 0.25 * self + 0.05 * edge-neighbor sum")
+
+    return scripted
+
+
 def create_test_suite():
     """
     Create a complete test suite with multiple emulators.
@@ -350,6 +433,7 @@ if __name__ == "__main__":
 
     # Derive output directory from the provided path
     output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Create a complete test suite with multiple emulators
     print("Creating test suite of emulators...\n")
@@ -395,6 +479,15 @@ if __name__ == "__main__":
         n_in_levels=4,
         diag_value=0.5,
         output_path=str(output_dir / "vertical_emulator.ts")
+    )
+    print()
+
+    # Non-local emulator: sea_water_salinity from sea_water_potential_temperature.
+    # Uses edge_node_connectivity supplied by C++.
+    create_nonlocal_emulator_with_metadata(
+        output_var_name="sea_water_salinity",
+        input_var_names=["sea_water_potential_temperature"],
+        output_path=str(output_dir / "nonlocal_emulator.ts")
     )
     print()
 

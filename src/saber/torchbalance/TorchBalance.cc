@@ -9,6 +9,7 @@
 #include <algorithm>
 
 #include "saber/torchbalance/TorchBalance.h"
+#include "saber/torchbalance/TorchBalanceNonLocalEmulator.h"
 #include "saber/torchbalance/TorchBalanceSurfaceEmulator.h"
 #include "saber/torchbalance/TorchBalanceVerticalEmulator.h"
 
@@ -36,7 +37,7 @@ TorchBalance::TorchBalance(
   : saber::SaberOuterBlockBase(params, xb.validTime(), outerGeometryData, outerVars),
     innerVars_(outerVars),
     innerGeometryData_(outerGeometryData),
-    jac_(nullptr)
+    jac_()
 {
   oops::Log::trace() << "TorchBalance constructed, inner vars: " << innerVars_ << std::endl;
 
@@ -84,12 +85,14 @@ TorchBalance::TorchBalance(
 
   // ---- Phase 2: allocate the Jacobian FieldSet ----
 
-  oops::Variables jacVars(jacStr);
-  for (size_t i = 0; i < jacStr.size(); ++i)
-    jacVars[jacStr[i]].setLevels(jacLevels[i]);
-  const double INITIAL_VALUE = 0.0;
-  auto fs = innerGeometryData_.functionSpace();
-  jac_ = util::createFieldSet(fs, jacVars, INITIAL_VALUE);
+  if (!jacStr.empty()) {
+    oops::Variables jacVars(jacStr);
+    for (size_t i = 0; i < jacStr.size(); ++i)
+      jacVars[jacStr[i]].setLevels(jacLevels[i]);
+    const double INITIAL_VALUE = 0.0;
+    auto fs = innerGeometryData_.functionSpace();
+    jac_ = util::createFieldSet(fs, jacVars, INITIAL_VALUE);
+  }
 
   // ---- Phase 3: run surface emulators ----
 
@@ -162,8 +165,19 @@ TorchBalance::TorchBalance(
     }
   }
 
+  // ---- Phase 5: load non-local emulators ----
+
+  if (params.nonLocalEmulators.value() != boost::none) {
+    for (const auto& emulator : *params.nonLocalEmulators.value()) {
+      oops::Log::info() << "TorchBalance non-local emulator: " << emulator.name.value()
+                        << "  path: " << emulator.path.value() << std::endl;
+      nonLocalEmulators_.push_back(std::make_unique<TorchBalanceNonLocalEmulator>(
+          innerGeometryData_, xb, emulator.path.value(), emulator.geometryTensors.value()));
+    }
+  }
+
   // Save the Jacobian fields to file if enabled
-  if (params.saveJacobians.value()) {
+  if (params.saveJacobians.value() && !jacStr.empty()) {
     oops::Log::debug() << "Saving Jacobian FieldSet for debugging" << std::endl;
     // Get grid identifier
     const std::string gridUid = util::getGridUid(outerGeometryData.functionSpace());
@@ -182,6 +196,10 @@ TorchBalance::TorchBalance(
 
 // --------------------------------------------------------------------------------------
 
+TorchBalance::~TorchBalance() = default;
+
+// --------------------------------------------------------------------------------------
+
 void TorchBalance::multiply(oops::FieldSet3D & fset) const {
   oops::Log::trace() << "TorchBalance::multiply start" << std::endl;
   auto ghostView = atlas::array::make_view<int, 1>(innerGeometryData_.functionSpace().ghost());
@@ -191,6 +209,7 @@ void TorchBalance::multiply(oops::FieldSet3D & fset) const {
   for (const auto& field : fset.fieldSet()) {
     fsetCopy.add(field.clone());
   }
+  const oops::FieldSet3D inputFset(fset);
 
   // Loop over each variable in the field set
   for (const auto& var : innerVars_) {
@@ -243,6 +262,10 @@ void TorchBalance::multiply(oops::FieldSet3D & fset) const {
     }
   }
 
+  for (const auto& emulator : nonLocalEmulators_) {
+    emulator->multiply(inputFset, fset);
+  }
+
   oops::Log::trace() << "TorchBalance::multiply done" << std::endl;
 }
 
@@ -257,6 +280,7 @@ void TorchBalance::multiplyAD(oops::FieldSet3D & fset) const {
   for (const auto& field : fset.fieldSet()) {
     fsetCopy.add(field.clone());
   }
+  const oops::FieldSet3D inputFset(fset);
 
   // Loop over each variable in the field set
   for (const auto& var : innerVars_) {
@@ -307,6 +331,10 @@ void TorchBalance::multiplyAD(oops::FieldSet3D & fset) const {
         }
       }
     }
+  }
+
+  for (const auto& emulator : nonLocalEmulators_) {
+    emulator->multiplyAD(inputFset, fset);
   }
 
   oops::Log::trace() << "TorchBalance::multiplyAD done" << std::endl;

@@ -23,6 +23,7 @@ background:
 background error:
   covariance model: SABER
   adjoint test: true
+  adjoint tolerance: 1e-6
   saber outer blocks:
   - saber block name: TorchBalance
     save jacobians: true
@@ -42,6 +43,11 @@ background error:
       path: ./testdata/dirac_torchbalance/vertical_emulator.ts
       jacobian wrt:
       - sea_water_potential_temperature
+    non-local emulators:
+    - name: sea_water_salinity_nonlocal
+      path: ./testdata/dirac_torchbalance/nonlocal_emulator.ts
+      geometry tensors:
+      - edge_node_connectivity
   saber central block:
     saber block name: ID
 

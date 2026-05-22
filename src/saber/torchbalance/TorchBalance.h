@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <memory>
 #include <map>
 #include <string>
 #include <vector>
@@ -23,6 +24,8 @@
 namespace saber {
 
 // --------------------------------------------------------------------------------------
+
+class TorchBalanceNonLocalEmulator;
 
 class SurfaceEmulatorParameters : public oops::Parameters {
   OOPS_CONCRETE_PARAMETERS(SurfaceEmulatorParameters, oops::Parameters)
@@ -44,6 +47,14 @@ class VerticalEmulatorParameters : public oops::Parameters {
   oops::OptionalParameter<int> maskLevel{"jacobian masking.level", this};
 };
 
+class NonLocalEmulatorParameters : public oops::Parameters {
+  OOPS_CONCRETE_PARAMETERS(NonLocalEmulatorParameters, oops::Parameters)
+ public:
+  oops::RequiredParameter<std::string> name{"name", this};
+  oops::RequiredParameter<std::string> path{"path", this};
+  oops::RequiredParameter<std::vector<std::string>> geometryTensors{"geometry tensors", this};
+};
+
 class TorchBalanceParameters : public saber::SaberBlockParametersBase {
   OOPS_CONCRETE_PARAMETERS(TorchBalanceParameters, saber::SaberBlockParametersBase)
  public:
@@ -53,10 +64,12 @@ class TorchBalanceParameters : public saber::SaberBlockParametersBase {
   }
 
   oops::Parameter<oops::Variables> innerVars{"inner variables", oops::Variables(), this};
-  oops::RequiredParameter<std::vector<SurfaceEmulatorParameters>> surfaceEmulators{
-    "surface emulators", this};
+  oops::Parameter<std::vector<SurfaceEmulatorParameters>> surfaceEmulators{
+    "surface emulators", std::vector<SurfaceEmulatorParameters>(), this};
   oops::OptionalParameter<std::vector<VerticalEmulatorParameters>> verticalEmulators{
     "vertical emulators", this};
+  oops::OptionalParameter<std::vector<NonLocalEmulatorParameters>> nonLocalEmulators{
+    "non-local emulators", this};
   oops::Parameter<bool> saveJacobians{"save jacobians", false, this};
 };
 
@@ -73,7 +86,7 @@ class TorchBalance : public SaberOuterBlockBase {
                const Parameters_ &,
                const oops::FieldSet3D &,
                const oops::FieldSet3D &);
-  virtual ~TorchBalance() = default;
+  virtual ~TorchBalance();
 
   const oops::Variables & innerVars() const override {return innerVars_;}
   const oops::GeometryData & innerGeometryData() const override {return innerGeometryData_;}
@@ -101,6 +114,7 @@ class TorchBalance : public SaberOuterBlockBase {
   oops::Variables innerVars_;
   const oops::GeometryData & innerGeometryData_;
   atlas::FieldSet jac_;
+  std::vector<std::unique_ptr<TorchBalanceNonLocalEmulator>> nonLocalEmulators_;
 
   // Store level metadata for each Jacobian field.
   // Surface emulators: nInputLevels = nOutputLevels = 1, specific level indices stored.
