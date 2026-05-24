@@ -204,6 +204,16 @@ void TorchBalance::multiply(oops::FieldSet3D & fset) const {
   oops::Log::trace() << "TorchBalance::multiply start" << std::endl;
   auto ghostView = atlas::array::make_view<int, 1>(innerGeometryData_.functionSpace().ghost());
 
+  // Synchronize active inputs before creating the read-only copy used below.
+  // This makes TorchBalance robust even if an upstream block did not refresh halos.
+  for (const auto & var : innerVars_) {
+    const std::string & varName = var.name();
+    if (!fset.has(varName)) continue;
+    fset[varName].set_dirty(true);
+    fset[varName].haloExchange();
+    fset[varName].set_dirty(false);
+  }
+
   // Make a copy of the input fields to read from (avoid reading modified values)
   atlas::FieldSet fsetCopy;
   for (const auto& field : fset.fieldSet()) {
@@ -266,6 +276,15 @@ void TorchBalance::multiply(oops::FieldSet3D & fset) const {
     emulator->multiply(inputFset, fset);
   }
 
+  // Keep ghost values synchronized after updates (local + non-local).
+  for (const auto & var : innerVars_) {
+    const std::string & varName = var.name();
+    if (!fset.has(varName)) continue;
+    fset[varName].set_dirty(true);
+    fset[varName].haloExchange();
+    fset[varName].set_dirty(false);
+  }
+
   oops::Log::trace() << "TorchBalance::multiply done" << std::endl;
 }
 
@@ -274,6 +293,15 @@ void TorchBalance::multiply(oops::FieldSet3D & fset) const {
 void TorchBalance::multiplyAD(oops::FieldSet3D & fset) const {
   oops::Log::trace() << "TorchBalance::multiplyAD start" << std::endl;
   auto ghostView = atlas::array::make_view<int, 1>(innerGeometryData_.functionSpace().ghost());
+
+  // Gather ghost contributions onto owned nodes before reading adjoint inputs.
+  for (const auto & var : innerVars_) {
+    const std::string & varName = var.name();
+    if (!fset.has(varName)) continue;
+    fset[varName].set_dirty(true);
+    fset[varName].adjointHaloExchange();
+    fset[varName].set_dirty(true);
+  }
 
   // Make a copy of the input fields to read from (avoid reading modified values)
   atlas::FieldSet fsetCopy;
@@ -335,6 +363,15 @@ void TorchBalance::multiplyAD(oops::FieldSet3D & fset) const {
 
   for (const auto& emulator : nonLocalEmulators_) {
     emulator->multiplyAD(inputFset, fset);
+  }
+
+  // Adjoint counterpart after updates: accumulate ghost contributions to owned nodes.
+  for (const auto & var : innerVars_) {
+    const std::string & varName = var.name();
+    if (!fset.has(varName)) continue;
+    fset[varName].set_dirty(true);
+    fset[varName].adjointHaloExchange();
+    fset[varName].set_dirty(true);
   }
 
   oops::Log::trace() << "TorchBalance::multiplyAD done" << std::endl;
