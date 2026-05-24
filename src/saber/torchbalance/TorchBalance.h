@@ -53,6 +53,8 @@ class NonLocalEmulatorParameters : public oops::Parameters {
   oops::RequiredParameter<std::string> name{"name", this};
   oops::RequiredParameter<std::string> path{"path", this};
   oops::RequiredParameter<std::vector<std::string>> geometryTensors{"geometry tensors", this};
+  oops::Parameter<std::vector<std::string>> backgroundTensors{
+    "background tensors", std::vector<std::string>(), this};
 };
 
 class TorchBalanceParameters : public saber::SaberBlockParametersBase {

@@ -31,10 +31,12 @@ TorchBalanceNonLocalEmulator::TorchBalanceNonLocalEmulator(
     const oops::GeometryData & geometryData,
     const oops::FieldSet3D & xb,
     const std::string & torchscriptPath,
-    const std::vector<std::string> & geometryTensorNames)
+    const std::vector<std::string> & geometryTensorNames,
+    const std::vector<std::string> & backgroundTensorNames)
   : geometryData_(geometryData),
     module_(torch::jit::load(torchscriptPath)),
-    geometryTensorNames_(geometryTensorNames) {
+    geometryTensorNames_(geometryTensorNames),
+    backgroundTensorNames_(backgroundTensorNames) {
   module_.eval();
 
   inputNames_ = readStringListAttribute("input_names");
@@ -53,9 +55,12 @@ TorchBalanceNonLocalEmulator::TorchBalanceNonLocalEmulator(
     }
   }
 
-  geometryTensors_.reserve(geometryTensorNames_.size());
+  geometryTensors_.reserve(geometryTensorNames_.size() + backgroundTensorNames_.size());
   for (const auto & tensorName : geometryTensorNames_) {
     geometryTensors_.push_back(makeGeometryTensor(tensorName));
+  }
+  for (const auto & tensorName : backgroundTensorNames_) {
+    geometryTensors_.push_back(makeBackgroundTensor(tensorName, xb));
   }
 
   const int nnodes = geometryData_.functionSpace().lonlat().shape(0);
@@ -266,6 +271,32 @@ torch::Tensor TorchBalanceNonLocalEmulator::makeGeometryTensor(const std::string
 
   throw eckit::Exception("TorchBalance non-local emulator unsupported geometry tensor '"
                          + tensorName + "'", Here());
+}
+
+// --------------------------------------------------------------------------------------
+
+torch::Tensor TorchBalanceNonLocalEmulator::makeBackgroundTensor(
+    const std::string & tensorName,
+    const oops::FieldSet3D & xb) const {
+  if (!xb.has(tensorName)) {
+    throw eckit::Exception("TorchBalance non-local emulator missing background field '"
+                           + tensorName + "'", Here());
+  }
+
+  const atlas::Field & field = xb[tensorName];
+  auto view = atlas::array::make_view<double, 2>(field);
+  const int nnodes = view.shape(0);
+  const int nlevels = view.shape(1);
+
+  std::vector<float> data;
+  data.reserve(nnodes * nlevels);
+  for (atlas::idx_t jnode = 0; jnode < nnodes; ++jnode) {
+    for (int level = 0; level < nlevels; ++level) {
+      data.push_back(static_cast<float>(view(jnode, level)));
+    }
+  }
+
+  return torch::from_blob(data.data(), {nnodes, nlevels}, torch::kFloat).clone();
 }
 
 // --------------------------------------------------------------------------------------

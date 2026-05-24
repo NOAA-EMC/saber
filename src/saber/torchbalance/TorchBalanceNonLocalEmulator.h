@@ -28,6 +28,7 @@ class TorchBalanceNonLocalEmulator {
   TorchBalanceNonLocalEmulator(const oops::GeometryData &,
                                const oops::FieldSet3D &,
                                const std::string &,
+                               const std::vector<std::string> &,
                                const std::vector<std::string> &);
 
   void multiply(oops::FieldSet3D &) const;
@@ -45,12 +46,14 @@ class TorchBalanceNonLocalEmulator {
                          const bool,
                          oops::FieldSet3D &) const;
   torch::Tensor makeGeometryTensor(const std::string &) const;
+  torch::Tensor makeBackgroundTensor(const std::string &, const oops::FieldSet3D &) const;
 
   const oops::GeometryData & geometryData_;
   torch::jit::script::Module module_;
   std::vector<std::string> inputNames_;
   std::vector<std::string> outputNames_;
   std::vector<std::string> geometryTensorNames_;
+  std::vector<std::string> backgroundTensorNames_;
   std::vector<torch::Tensor> geometryTensors_;
   torch::Tensor mask_;
 };
