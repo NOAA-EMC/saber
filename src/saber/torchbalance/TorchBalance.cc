@@ -172,7 +172,8 @@ TorchBalance::TorchBalance(
       oops::Log::info() << "TorchBalance non-local emulator: " << emulator.name.value()
                         << "  path: " << emulator.path.value() << std::endl;
       nonLocalEmulators_.push_back(std::make_unique<TorchBalanceNonLocalEmulator>(
-          innerGeometryData_, xb, emulator.path.value(), emulator.geometryTensors.value()));
+          innerGeometryData_, xb, emulator.path.value(), emulator.geometryTensors.value(),
+          emulator.backgroundTensors.value()));
     }
   }
 
