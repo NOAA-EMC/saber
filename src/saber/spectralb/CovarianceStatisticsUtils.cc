@@ -51,7 +51,7 @@ atlas::array::ArrayT<double> setupInplaceGEMVBuffer(
     return atlas::array::ArrayT<double>(
       static_cast<atlas::idx_t>(atlas_omp_get_max_threads()), max_levels);
   } else {
-    return atlas::array::ArrayT<double>(1, {max_levels});
+    return atlas::array::ArrayT<double>(1, max_levels);
   }
 }
 

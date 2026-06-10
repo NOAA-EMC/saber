@@ -13,6 +13,7 @@
 #include "saber/bifourier/BifourierAromeLegacy.h"
 #include "saber/bifourier/BifourierUtilities.h"
 
+#undef ERR
 #define ERR(e, msg) {std::string s(nc_strerror(e)); \
   throw eckit::Exception(s + " : " + msg, Here());}
 
@@ -411,8 +412,8 @@ void BifourierCovariance::write() const {
   ASSERT(params_.outputFile.value() != boost::none);
 
   // NetCDF IDs
-  int retval, ncid, nw_id, nzI_id, nzJ_id, dStdDev_id[1], dCorSqrt_id[3],
-    stdDev_id[activeVars_.size()], corSqrt_id[activeVars_.size()];
+  int retval, ncid, nw_id, nzI_id, nzJ_id, dStdDev_id[1], dCorSqrt_id[3];
+  std::vector<int> stdDev_id(activeVars_.size()), corSqrt_id(activeVars_.size());
 
   // NetCDF file path
   const std::string ncFilePath = *params_.outputFile.value();

@@ -78,7 +78,7 @@ class RedWindToGeoWind : public SaberOuterBlockBase {
   void multiplyAD(oops::FieldSet3D &) const override;
   void leftInverseMultiply(oops::FieldSet3D &) const override;
 
-  std::vector<std::pair<eckit::LocalConfiguration, oops::FieldSet3D>> fieldsToWrite() const;
+  std::vector<std::pair<eckit::LocalConfiguration, oops::FieldSet3D>> fieldsToWrite() const override;
 
  private:
   // Inner geometry data

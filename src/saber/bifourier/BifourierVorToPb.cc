@@ -13,6 +13,7 @@
 
 #include "saber/bifourier/BifourierAromeLegacy.h"
 
+#undef ERR
 #define ERR(e, msg) {std::string s(nc_strerror(e)); \
   throw eckit::Exception(s + " : " + msg, Here());}
 

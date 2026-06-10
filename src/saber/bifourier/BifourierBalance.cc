@@ -15,6 +15,7 @@
 #include "saber/bifourier/BifourierAromeLegacy.h"
 #include "saber/bifourier/BifourierUtilities.h"
 
+#undef ERR
 #define ERR(e, msg) {std::string s(nc_strerror(e)); \
   throw eckit::Exception(s + " : " + msg, Here());}
 
@@ -371,8 +372,8 @@ void BifourierBalance::write() const {
   ASSERT(params_.outputFile.value() != boost::none);
 
   // NetCDF IDs
-  int retval, ncid, nwGlb_id, d3D_id[3], nzI_id[balVars_.size()], nzJ_id[balVars_.size()],
-    reg_id[nCmp_];
+  int retval, ncid, nwGlb_id, d3D_id[3];
+  std::vector<int> nzI_id(balVars_.size()), nzJ_id(balVars_.size()), reg_id(nCmp_);
 
   // NetCDF file path
   const std::string ncFilePath = *params_.outputFile.value();
