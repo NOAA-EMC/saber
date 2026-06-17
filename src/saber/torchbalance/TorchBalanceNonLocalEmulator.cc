@@ -9,7 +9,9 @@
 #include "saber/torchbalance/TorchBalanceNonLocalEmulator.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <limits>
 #include <set>
 #include <sstream>
 #include <string>
@@ -22,6 +24,55 @@
 #include "eckit/exception/Exceptions.h"
 
 #include "oops/util/Logger.h"
+
+namespace {
+
+struct ValueStats {
+  int64_t nfinite = 0;
+  int64_t nnan = 0;
+  int64_t ninf = 0;
+  double min = std::numeric_limits<double>::infinity();
+  double max = -std::numeric_limits<double>::infinity();
+};
+
+void updateStats(const double value, ValueStats & stats) {
+  if (std::isnan(value)) {
+    ++stats.nnan;
+    return;
+  }
+  if (!std::isfinite(value)) {
+    ++stats.ninf;
+    return;
+  }
+  ++stats.nfinite;
+  stats.min = std::min(stats.min, value);
+  stats.max = std::max(stats.max, value);
+}
+
+std::string statsSummary(const ValueStats & stats) {
+  std::ostringstream oss;
+  oss << "finite=" << stats.nfinite
+      << " nan=" << stats.nnan
+      << " inf=" << stats.ninf;
+  if (stats.nfinite > 0) {
+    oss << " min=" << stats.min
+        << " max=" << stats.max;
+  }
+  return oss.str();
+}
+
+ValueStats tensorStats(torch::Tensor tensor) {
+  ValueStats stats;
+  torch::Tensor cpu = tensor.to(torch::kCPU).to(torch::kFloat).contiguous();
+  torch::Tensor flat_tensor = cpu.view({-1});
+  auto flat = flat_tensor.accessor<float, 1>();
+  for (int64_t idx = 0; idx < cpu.numel(); ++idx) {
+    updateStats(static_cast<double>(flat[idx]), stats);
+  }
+  return stats;
+}
+
+}  // namespace
 
 namespace saber {
 
@@ -68,8 +119,9 @@ TorchBalanceNonLocalEmulator::TorchBalanceNonLocalEmulator(
 
   oops::Log::info() << "TorchBalance non-local emulator loaded " << torchscriptPath
                     << " with " << inputNames_.size() << " inputs, "
-                    << outputNames_.size() << " outputs, and "
-                    << geometryTensors_.size() << " geometry tensors" << std::endl;
+                    << outputNames_.size() << " outputs, "
+                    << geometryTensorNames_.size() << " geometry tensors, and "
+                    << backgroundTensorNames_.size() << " background tensors" << std::endl;
 }
 
 // --------------------------------------------------------------------------------------
@@ -107,15 +159,21 @@ std::vector<torch::Tensor> TorchBalanceNonLocalEmulator::packFields(
     const int nnodes = view.shape(0);
     const int nlevels = view.shape(1);
 
+    ValueStats fieldStats;
     std::vector<float> data;
     data.reserve(nnodes * nlevels);
     for (atlas::idx_t jnode = 0; jnode < nnodes; ++jnode) {
       for (int level = 0; level < nlevels; ++level) {
-        data.push_back(static_cast<float>(view(jnode, level)));
+        const double value = view(jnode, level);
+        updateStats(value, fieldStats);
+        data.push_back(static_cast<float>(value));
       }
     }
 
     tensors.push_back(torch::from_blob(data.data(), {nnodes, nlevels}, torch::kFloat).clone());
+    oops::Log::debug() << "TorchBalance non-local packFields: " << fieldName
+                       << " shape=[" << nnodes << ", " << nlevels << "] "
+                       << statsSummary(fieldStats) << std::endl;
   }
 
   return tensors;
@@ -151,21 +209,32 @@ void TorchBalanceNonLocalEmulator::addReturnedFields(
       throw eckit::Exception(err.str(), Here());
     }
 
+    oops::Log::debug() << "TorchBalance non-local addReturnedFields: tensor "
+                       << fieldNames[jfield] << " shape=[" << tensor.size(0)
+                       << ", " << tensor.size(1) << "] "
+                       << statsSummary(tensorStats(tensor)) << std::endl;
+
     auto accessor = tensor.accessor<float, 2>();
+    ValueStats outStats;
     for (atlas::idx_t jnode = 0; jnode < view.shape(0); ++jnode) {
       if (!addOnGhost[jfield] && ghostView(jnode) > 0) continue;
       for (int level = 0; level < view.shape(1); ++level) {
         view(jnode, level) += static_cast<double>(accessor[jnode][level]);
+        updateStats(view(jnode, level), outStats);
       }
     }
 
-    if (adjointHaloExchange) {
-      field.adjointHaloExchange();
-      field.set_dirty(true);
-    } else {
-      field.haloExchange();
-      field.set_dirty(false);
-    }
+//     if (adjointHaloExchange) {
+//      field.adjointHaloExchange();
+//      field.set_dirty(true);
+//    } else {
+//      field.haloExchange();
+//      field.set_dirty(false);
+//    }
+
+    oops::Log::debug() << "TorchBalance non-local addReturnedFields: field "
+                       << fieldNames[jfield] << " after add+halo "
+                       << statsSummary(outStats) << std::endl;
   }
 }
 
@@ -314,9 +383,9 @@ void TorchBalanceNonLocalEmulator::multiply(const oops::FieldSet3D & inputFset,
     fsetCopy.add(field.clone());
   }
 
-  for (const auto & inputName : inputNames_) {
-    fsetCopy[inputName].haloExchange();
-  }
+//  for (const auto & inputName : inputNames_) {
+//    fsetCopy[inputName].haloExchange();
+//  }
   oops::FieldSet3D packedFset(inputFset.validTime(), inputFset.commGeom());
   packedFset.shallowCopy(fsetCopy);
   std::vector<torch::Tensor> inputTensors = packFields(packedFset, inputNames_);
@@ -335,6 +404,15 @@ void TorchBalanceNonLocalEmulator::multiply(const oops::FieldSet3D & inputFset,
     throw eckit::Exception(
         "TorchBalance non-local TorchScript method multiply(inputs, geometry, mask) failed",
         Here());
+  }
+
+  oops::Log::debug() << "TorchBalance non-local multiply: returned "
+                     << outputTensors.size() << " tensors" << std::endl;
+  for (size_t jfield = 0; jfield < outputNames_.size() &&
+                          jfield < static_cast<size_t>(outputTensors.size()); ++jfield) {
+    oops::Log::debug() << "TorchBalance non-local multiply: output " << outputNames_[jfield]
+                       << " " << statsSummary(tensorStats(outputTensors.get(jfield)))
+                       << std::endl;
   }
 
   addReturnedFields(outputTensors, outputNames_, std::vector<int>(outputNames_.size(), 0),
@@ -356,8 +434,23 @@ void TorchBalanceNonLocalEmulator::multiplyAD(const oops::FieldSet3D & inputFset
     fsetCopy.add(field.clone());
   }
 
+  // Log adjoint input fields before processing
   for (const auto & outputName : outputNames_) {
-    fsetCopy[outputName].adjointHaloExchange();
+    if (fsetCopy.has(outputName)) {
+      auto view = atlas::array::make_view<double, 2>(fsetCopy[outputName]);
+      ValueStats adjointStats;
+      for (atlas::idx_t jnode = 0; jnode < view.shape(0); ++jnode) {
+        for (int level = 0; level < view.shape(1); ++level) {
+          updateStats(view(jnode, level), adjointStats);
+        }
+      }
+      oops::Log::debug() << "TorchBalance non-local multiplyAD: adjoint input " << outputName
+                         << " " << statsSummary(adjointStats) << std::endl;
+    }
+  }
+
+  for (const auto & outputName : outputNames_) {
+    //fsetCopy[outputName].adjointHaloExchange();
     auto ghostView = atlas::array::make_view<int, 1>(geometryData_.functionSpace().ghost());
     auto outputView = atlas::array::make_view<double, 2>(fsetCopy[outputName]);
     for (atlas::idx_t jnode = 0; jnode < outputView.shape(0); ++jnode) {
@@ -385,6 +478,34 @@ void TorchBalanceNonLocalEmulator::multiplyAD(const oops::FieldSet3D & inputFset
     throw eckit::Exception(
         "TorchBalance non-local TorchScript method multiply_ad(outputs_ad, geometry, mask) failed",
         Here());
+  }
+
+  // Log auxiliary tensor stats (geometry tensors followed by background tensors)
+  oops::Log::debug() << "TorchBalance non-local multiplyAD: " << geometryTensors_.size()
+                     << " auxiliary tensors being passed to multiply_ad"
+                     << " (" << geometryTensorNames_.size() << " geometry + "
+                     << backgroundTensorNames_.size() << " background)" << std::endl;
+  for (size_t jgeo = 0; jgeo < geometryTensors_.size(); ++jgeo) {
+    const bool isGeometry = (jgeo < geometryTensorNames_.size());
+    const size_t localIdx = isGeometry ? jgeo : (jgeo - geometryTensorNames_.size());
+    const std::string & tensorName = isGeometry
+      ? geometryTensorNames_[localIdx]
+      : backgroundTensorNames_[localIdx];
+    oops::Log::debug() << "TorchBalance non-local multiplyAD: "
+                       << (isGeometry ? "geometry" : "background")
+                       << " tensor " << jgeo << " (" << tensorName << ")"
+                       << " shape=" << geometryTensors_[jgeo].sizes()
+                       << " " << statsSummary(tensorStats(geometryTensors_[jgeo]))
+                       << std::endl;
+  }
+
+  oops::Log::debug() << "TorchBalance non-local multiplyAD: returned "
+                     << inputTensors.size() << " tensors" << std::endl;
+  for (size_t jfield = 0; jfield < inputNames_.size() &&
+                          jfield < static_cast<size_t>(inputTensors.size()); ++jfield) {
+    oops::Log::debug() << "TorchBalance non-local multiplyAD: output " << inputNames_[jfield]
+                       << " " << statsSummary(tensorStats(inputTensors.get(jfield)))
+                       << std::endl;
   }
 
   addReturnedFields(inputTensors, inputNames_, std::vector<int>(inputNames_.size(), 1),
