@@ -299,6 +299,8 @@ class DriversSection : public oops::Parameters {
   oops::Parameter<bool> write_hdiag = param(def.write_hdiag, this);
   // Write HDIAG components detail
   oops::Parameter<bool> write_hdiag_detail = param(def.write_hdiag_detail, this);
+  // Write HDIAG diagnostics in yaml file
+  oops::Parameter<bool> write_hdiag_yaml = param(def.write_hdiag_yaml, this);
   // Read universe radius
   oops::Parameter<bool> load_universe_radius = param(def.load_universe_radius, this);
   // Write universe radius
@@ -619,8 +621,6 @@ class NICASSection : public oops::Parameters {
   oops::Parameter<double> nicas_si_factor = param(def.nicas_si_factor, this);
   // Normalization randomization size
   oops::Parameter<int> norm_rand_size = param(def.norm_rand_size, this);
-  // Positive-definiteness test
-  oops::Parameter<bool> pos_def_test = param(def.pos_def_test, this);
   // Horizontal NICAS interpolation test
   oops::Parameter<bool> interp_test = param(def.interp_test, this);
   // Overriding component in file

@@ -9,7 +9,7 @@
 
 cmake_minimum_required( VERSION 3.12 )
 
-project( saber VERSION 1.10.0 LANGUAGES CXX Fortran )
+project( saber VERSION 1.13.0 LANGUAGES CXX Fortran )
 
 option(OPENMP "Build saber with OpenMP support" ON)
 
@@ -34,6 +34,8 @@ option( ENABLE_SABER_DOC "Enable SABER documentation" OFF )
 option( ENABLE_MKL "Use MKL for LAPACK implementation (if available)" ON )
 option( ENABLE_BUMP "Compile BUMP and run BUMP-based tests" ON )
 option( ENABLE_BUMP_INSTRUMENTATION "Enable BUMP instrumentation" OFF )
+option( ENABLE_TORCH "Use Torch" OFF )
+option( VENV_DIR "Virtual environment directory" ${CMAKE_CURRENT_BINARY_DIR}/torch_env )
 option( ENABLE_QUENCH "Compile QUENCH and run QUENCH-based tests" ON )
 include( ${PROJECT_NAME}_compiler_flags )
 
@@ -54,15 +56,6 @@ if(OpenMP_FOUND)
 else()
     find_package( atlas 0.35.0 REQUIRED COMPONENTS TESSELATION)
 endif()
-# TODO(Benjamin): check when ATLAS PR #215 is merged into a tagged version to update the version number
-if( atlas_VERSION VERSION_GREATER "0.38.1" )
-    set( ATLAS_REGIONAL_INTERP ON )
-else()
-    set( ATLAS_REGIONAL_INTERP OFF )
-endif()
-if( DEFINED ENV{ATLAS_REGIONAL_INTERP} )
-    set( ATLAS_REGIONAL_INTERP $ENV{ATLAS_REGIONAL_INTERP} )
-endif()
 
 if( atlas_VERSION VERSION_GREATER "0.41" )
     add_definitions(-DATLAS_MAKE_SPARSE)
@@ -73,15 +66,16 @@ if( atlas_VERSION VERSION_GREATER_EQUAL "0.44.0" )
     add_definitions(-DATLAS_SUPPORTS_SPHERICAL_VECTOR_INTERP_META)
 endif()
 
-# Flag to set if an issue in Atlas regarding the use of atlas::mpi::Scope
-# is resolved, and so extra calls to `eckit::mpi::setCommDefault` are not needed.
-# This is because sometimes Atlas used to erroneously set the MPI communicator.
-# See Atlas issue #186.
+# Flag to set if version of Atlas currently in use is 0.46.0 or newer.
+# This version resolves an issue regarding the use of atlas::mpi::scope 
+# which previously required extra calls to `eckit::mpi::setCommDefault`,
+# see Atlas issue #186. Note this version also provides spherical
+# mean value interpolator and heterogeneous redistribution functionality.
 if ( atlas_VERSION VERSION_GREATER_EQUAL "0.46.0" )
-  add_definitions(-DATLAS_SCOPE_ISSUE_RESOLVED)
-  set( ATLAS_SUPPORTS_SPECTRAL_ON_SPLIT_COMM ON )
+  add_definitions(-DATLAS_VERSION_46_OR_GREATER)
+  set( ATLAS_TEST_46_OR_GREATER ON )
 else()
-  set( ATLAS_SUPPORTS_SPECTRAL_ON_SPLIT_COMM OFF )
+  set( ATLAS_TEST_46_OR_GREATER OFF )
 endif()
 
 if( ENABLE_MKL )
@@ -94,8 +88,8 @@ else()
 endif()
 
 # Required
-find_package( oops 1.10.0 REQUIRED )
-find_package( vader 1.7.0 REQUIRED )
+find_package( oops 1.13.0 REQUIRED )
+find_package( vader 1.10.0 REQUIRED )
 
 # Optionals
 find_package( ECTRANS 1.6.0 COMPONENTS transi double QUIET ) # TODO(Benjamin): update tag once the ectrans PR is merged and a new tag is created
@@ -104,17 +98,60 @@ find_package( ip 5 QUIET )
 find_package( gsibec 1.4.2 QUIET )
 
 # Torch
-set(Torch_FOUND FALSE CACHE BOOL "Torch not found")
-if(DEFINED Torch_ROOT AND NOT Torch_ROOT STREQUAL "")
-  set(Torch_FOUND TRUE CACHE BOOL "Torch found" FORCE)
-  # Temporary fix until Torch is properly installed as a cmake package
-  include_directories("${Torch_ROOT}/include")
-  include_directories("${Torch_ROOT}/include/torch/csrc/api/include")
-  # Use full paths to libraries instead of link_directories
-  set(TORCH_LIBRARIES
-      "${Torch_ROOT}/lib/libtorch.so"
-      "${Torch_ROOT}/lib/libtorch_cpu.so"
-      "${Torch_ROOT}/lib/libc10.so")
+if( DEFINED Torch_ROOT AND NOT Torch_ROOT STREQUAL "")
+    # Torch root defined by the user at configure time, enable Torch
+    set( ENABLE_TORCH ON )
+endif()
+if( ENABLE_TORCH )
+    # Create virtual environment
+    message( STATUS "Virtual environment for Python/Torch: " ${VENV_DIR} )
+
+    # Find Python3 for venv creation
+    if( NOT Python3_EXECUTABLE )
+        find_package( Python3 COMPONENTS Interpreter REQUIRED )
+     endif()
+
+    # Create virtual environment only during CMake configuration
+    set( VENV_PYTHON ${VENV_DIR}/bin/python )
+
+    if( NOT EXISTS ${VENV_PYTHON} )
+        message( STATUS "Creating virtual environment for Torch in: " ${VENV_DIR} )
+        execute_process(
+            COMMAND ${Python3_EXECUTABLE} -m venv ${VENV_DIR}
+            RESULT_VARIABLE VENV_RESULT
+        )
+        if( NOT VENV_RESULT EQUAL 0 )
+            message( FATAL_ERROR "Failed to create virtual environment" )
+        endif()
+
+        execute_process(
+            COMMAND ${VENV_DIR}/bin/pip install torch
+            RESULT_VARIABLE PIP_RESULT
+        )
+        if( NOT PIP_RESULT EQUAL 0 )
+            message( FATAL_ERROR "Failed to install PyTorch in virtual environment" )
+        endif()
+    endif()
+
+    if( DEFINED Torch_ROOT AND NOT Torch_ROOT STREQUAL "")
+        # Torch root defined by the user at configure time
+        message( STATUS "Torch root defined by user: " ${Torch_ROOT} )
+    else()
+        # Find Python version to define Torch root directory
+        file( READ_SYMLINK ${VENV_PYTHON} PYTHON_VERSION )
+        set( Torch_ROOT ${VENV_DIR}/lib/${PYTHON_VERSION}/site-packages/torch )
+        message( STATUS "Torch root in the virtual environment: " ${Torch_ROOT} )
+    endif()
+
+    # Temporary fix until Torch is properly installed as a cmake package
+    include_directories( ${Torch_ROOT}/include )
+    include_directories( ${Torch_ROOT}/include/torch/csrc/api/include )
+
+    # Use full paths to libraries instead of link_directories
+    set( TORCH_LIBRARIES
+           ${Torch_ROOT}/lib/libtorch.so
+           ${Torch_ROOT}/lib/libtorch_cpu.so
+           ${Torch_ROOT}/lib/libc10.so )
 endif()
 
 # Optional SABER blocks

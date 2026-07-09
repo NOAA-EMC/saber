@@ -94,6 +94,7 @@ class Hpm1ToHexnerExnerm1 : public SaberOuterBlockBase {
   void multiply(oops::FieldSet3D &) const override;
   void multiplyAD(oops::FieldSet3D &) const override;
   void leftInverseMultiply(oops::FieldSet3D &) const override;
+  void rightInverseMultiply(oops::FieldSet3D &) const override;
 
   void directCalibration(const oops::FieldSets & fset) override;
 

@@ -21,7 +21,8 @@
 #include "oops/util/ConfigFunctions.h"
 #include "oops/util/Logger.h"
 #include "oops/util/missingValues.h"
-#include "oops/util/RandomField.h"
+
+#include "saber/util/Randomization.h"
 
 #define ERR(e) {throw eckit::Exception(nc_strerror(e), Here());}
 
@@ -42,7 +43,7 @@ FastLAM::FastLAM(const oops::GeometryData & geometryData,
                  const oops::FieldSet3D & fg) :
     SaberCentralBlockBase(params, xb.validTime(), geometryData, centralVars),
     comm_(geometryData.comm()),
-    params_(params.calibration.value() != boost::none ? *params.calibration.value()
+    params_(params.calibration.value() ? *params.calibration.value()
       : *params.read.value()),
     fieldsMetaData_(params.fieldsMetaData.value())
 {
@@ -71,6 +72,42 @@ FastLAM::FastLAM(const oops::GeometryData & geometryData,
   comm_.allReduceInPlace(nx0_, eckit::mpi::max());
   comm_.allReduceInPlace(ny0_, eckit::mpi::max());
   oops::Log::info() << "Info     : Regional grid size: " << nx0_ << "x" << ny0_ << std::endl;
+
+  if (params_.fspaceFromBkgVar.value()) {
+    // Use the function space of a field of the background
+
+    // Check function space type
+    ASSERT(xb[*params_.fspaceFromBkgVar.value()].functionspace().type() == "StructuredColumns");
+
+    // Ghost points
+    const auto ghostBkgView = atlas::array::make_view<int, 1>(
+      xb[*params_.fspaceFromBkgVar.value()].functionspace().ghost());
+
+    // Index fields
+    const atlas::functionspace::StructuredColumns fsBkg(
+      xb[*params_.fspaceFromBkgVar.value()].functionspace());
+    const auto indexX0BkgView = atlas::array::make_indexview<int, 1>(fsBkg.index_i());
+    const auto indexY0BkgView = atlas::array::make_indexview<int, 1>(fsBkg.index_j());
+
+    // Get grid size
+    nx0Bkg_ = 0;
+    ny0Bkg_ = 0;
+    const size_t nodes0Bkg = fsBkg.size();
+    for (size_t jnode0Bkg = 0; jnode0Bkg < nodes0Bkg; ++jnode0Bkg) {
+      if (ghostBkgView(jnode0Bkg) == 0) {
+        nx0Bkg_ = std::max(nx0Bkg_, static_cast<size_t>(indexX0BkgView(jnode0Bkg))+1);
+        ny0Bkg_ = std::max(ny0Bkg_, static_cast<size_t>(indexY0BkgView(jnode0Bkg))+1);
+      }
+    }
+    comm_.allReduceInPlace(nx0Bkg_, eckit::mpi::max());
+    comm_.allReduceInPlace(ny0Bkg_, eckit::mpi::max());
+    oops::Log::info() << "Info     : Background regional grid size: " << nx0Bkg_ << "x" << ny0Bkg_
+      << std::endl;
+  } else {
+    // Use geometry data function space
+    nx0Bkg_ = nx0_;
+    ny0Bkg_ = ny0_;
+  }
 
   // Define 2d active variables
   active2dVars_ = oops::Variables();
@@ -121,6 +158,59 @@ FastLAM::FastLAM(const oops::GeometryData & geometryData,
     }
   }
 
+  if (params_.strategy.value() == "duplicated and weighted") {
+    // Allocation
+    const size_t nv = centralVars.size();
+    Eigen::MatrixXd locWgt = Eigen::MatrixXd::Zero(nv, nv);
+    locWgtSqrt_.resize(nv, nv);
+
+    // Set default weights
+    for (size_t jg = 0; jg < groups_.size(); ++jg) {
+      for (const auto & var1 : groups_[jg].variables_) {
+        // Get variable 1 index
+        const size_t jv1 = centralVars.find(var1);
+
+        for (const auto & var2 : groups_[jg].variables_) {
+          // Get variable 2 index
+          const size_t jv2 = centralVars.find(var2);
+
+          if (jv1 == jv2) {
+            // Unit diagonal
+            locWgt(jv2, jv1) = 1.0;
+          } else {
+            // Default off-diagonal weight
+            locWgt(jv2, jv1) = params_.defaultWeight.value();
+          }
+        }
+      }
+    }
+
+    // Set specific weights
+    for (const auto & specWeight : params_.specWeights.value()) {
+      // Get variables pair and weight
+      const std::vector<std::string> variablesPair = specWeight.variablesPair.value();
+      ASSERT(variablesPair.size() == 2);
+      const double weight = specWeight.weight.value();
+
+      // Get variables pair indices
+      const size_t jv1 = centralVars.find(variablesPair[0]);
+      const size_t jv2 = centralVars.find(variablesPair[1]);
+
+      // Check that variables are different
+      ASSERT(jv1 != jv2);
+
+      // Check that variables are in the same group
+      ASSERT(getGroupIndex(variablesPair[0]) == getGroupIndex(variablesPair[1]));
+
+      // Set weight symmetrically
+      locWgt(jv2, jv1) = weight;
+      locWgt(jv1, jv2) = weight;
+    }
+
+    // Cholesky decomposition
+    locWgtSqrt_ = locWgt.llt().matrixL();
+  }
+
   oops::Log::trace() << classname() << "::FastLAM done" << std::endl;
 }
 
@@ -133,105 +223,25 @@ FastLAM::~FastLAM() {
 
 // -----------------------------------------------------------------------------
 
-void FastLAM::randomize(oops::FieldSet3D & fset) const {
-  oops::Log::trace() << classname() << "::randomize starting" << std::endl;
+void FastLAM::randomCtlVec(atlas::Field & cv,
+                           const size_t & offset) const {
+  oops::Log::trace() << classname() << "::randomCtlVec starting" << std::endl;
 
-  // Create control vector
-  atlas::Field cv("genericCtlVec", atlas::array::make_datatype<double>(),
-    atlas::array::make_shape(ctlVecSize()));
+  // Create local control vector
+  atlas::Field cvTmp("genericCtlVec", atlas::array::make_datatype<double>(),
+    atlas::array::make_shape(ctlVecSize_));
 
-  // Sizes, sendcounts and displs
-  std::vector<int> sendcounts(comm_.size());
-  comm_.allGather(static_cast<int>(ctlVecSize()), sendcounts.begin(), sendcounts.end());
-  size_t ctlVecSizeGlb = 0;
-  for (const auto ctlVecSize : sendcounts) {
-    ctlVecSizeGlb += ctlVecSize;
-  }
-  std::vector<int> displs(comm_.size());
-  displs[0] = 0;
-  for (size_t jt = 0; jt < comm_.size()-1; ++jt) {
-    displs[jt+1] = displs[jt]+sendcounts[jt];
-  }
+  // Random local control vector
+  util::randomCtlVec(comm_, glbIndex_, cvTmp);
 
-  // Generate global random vector
-  std::vector<double> rand_vec_glb;
-  if (comm_.rank() == 0) {
-    util::NormalDistributionField dist(ctlVecSizeGlb, 0.0, 1.0);
-    rand_vec_glb.resize(ctlVecSizeGlb);
-    for (size_t jcv = 0; jcv < ctlVecSizeGlb; ++jcv) {
-      rand_vec_glb[jcv] = dist[jcv];
-    }
-  }
-
-  // Scatter random vector
-  std::vector<double> rand_vec(ctlVecSize());
-  comm_.scatterv(rand_vec_glb.begin(), rand_vec_glb.end(), sendcounts, displs,
-    rand_vec.begin(), rand_vec.end(), 0);
-
-  // Fill control vector
+  // Fill control vector values
+  const auto cvTmpView = atlas::array::make_view<double, 1>(cvTmp);
   auto cvView = atlas::array::make_view<double, 1>(cv);
-  for (size_t jcv = 0; jcv < ctlVecSize(); ++jcv) {
-    cvView(jcv) = rand_vec[jcv];
+  for (size_t jcv = 0; jcv < ctlVecSize_; ++jcv) {
+    cvView(jcv+offset) = cvTmpView(jcv);
   }
 
-  // Square-root multiplication
-  const size_t index = 0;
-  multiplySqrt(cv, fset, index);
-
-  oops::Log::trace() << classname() << "::randomize done" << std::endl;
-}
-
-// -----------------------------------------------------------------------------
-
-void FastLAM::multiply(oops::FieldSet3D & fset) const {
-  oops::Log::trace() << classname() << "::multiply starting" << std::endl;
-
-  // Create control vector
-  atlas::Field cv("genericCtlVec", atlas::array::make_datatype<double>(),
-    atlas::array::make_shape(ctlVecSize()));
-  const size_t index = 0;
-
-  // Square-root multiplication, adjoint
-  multiplySqrtAD(fset, cv, index);
-
-  // Square-root multiplication
-  multiplySqrt(cv, fset, index);
-
-  oops::Log::trace() << classname() << "::multiply done" << std::endl;
-}
-
-// -----------------------------------------------------------------------------
-
-size_t FastLAM::ctlVecSize() const {
-  oops::Log::trace() << classname() << "::ctlVecSize starting" << std::endl;
-
-  // Loop over bins
-  size_t ctlVecSize = 0;
-  for (size_t jBin = 0; jBin < weight_.size(); ++jBin) {
-    // Loop over groups
-    for (size_t jg = 0; jg < groups_.size(); ++jg) {
-      if (params_.strategy.value() == "univariate") {
-        // Univariate strategy
-        ctlVecSize += data_[jg][jBin]->ctlVecSize()*groups_[jg].variables_.size();
-      } else if (params_.strategy.value() == "duplicated") {
-        // Duplicated strategy
-        ctlVecSize += data_[jg][jBin]->ctlVecSize();
-      } else if (params_.strategy.value() == "crossed") {
-        // Crossed strategy
-        if (jg == 0) {
-          ctlVecSize += data_[jg][jBin]->ctlVecSize();
-        } else {
-          ASSERT(data_[jg][jBin]->ctlVecSize() == data_[0][jBin]->ctlVecSize());
-        }
-      } else {
-        // Wrong multivariate strategy
-        throw eckit::UserError("wrong multivariate strategy: " + params_.strategy.value(), Here());
-      }
-    }
-  }
-
-  oops::Log::trace() << classname() << "::ctlVecSize done" << std::endl;
-  return ctlVecSize;
+  oops::Log::trace() << classname() << "::randomCtlVec done" << std::endl;
 }
 
 // -----------------------------------------------------------------------------
@@ -269,9 +279,6 @@ void FastLAM::multiplySqrt(const atlas::Field & cv,
           atlas::Field binField = fsetBin[var];
           data_[jg][jBin]->multiplySqrt(cv, binField, index);
 
-          // Update control vector index
-          index += data_[jg][jBin]->ctlVecSize();
-
           // Apply weight square-root and normalization
           auto binView = atlas::array::make_view<double, 2>(binField);
           const atlas::Field wgtSqrtField = (*weight_[jBin])[groups_[jg].name_];
@@ -286,6 +293,9 @@ void FastLAM::multiplySqrt(const atlas::Field & cv,
               }
             }
           }
+
+          // Update control vector index
+          index += data_[jg][jBin]->ctlVecSize();
         }
       }
     } else if (params_.strategy.value() == "duplicated") {
@@ -298,9 +308,6 @@ void FastLAM::multiplySqrt(const atlas::Field & cv,
 
         // Layer multiplication
         data_[jg][jBin]->multiplySqrt(cv, grpField, index);
-
-        // Update control vector index
-        index += data_[jg][jBin]->ctlVecSize();
 
         // Apply weight square-root and normalization
         const atlas::Field wgtSqrtField = (*weight_[jBin])[groups_[jg].name_];
@@ -332,8 +339,67 @@ void FastLAM::multiplySqrt(const atlas::Field & cv,
             }
           }
         }
+
+        // Update control vector index
+        index += data_[jg][jBin]->ctlVecSize();
+      }
+    } else if (params_.strategy.value() == "duplicated and weighted") {
+      // Duplicated and weighted strategy
+      fsetBin.zero();
+      for (size_t jg = 0; jg < groups_.size(); ++jg) {
+        // Create group field
+        atlas::Field grpField = geometryData().functionSpace().createField<double>(
+          atlas::option::name(groups_[jg].name_) | atlas::option::levels(groups_[jg].nz0_));
+        auto grpView = atlas::array::make_view<double, 2>(grpField);
+
+        for (const auto & var1 : groups_[jg].variables_) {
+          // Get variable 1 index
+          const size_t jv1 = centralVars().find(var1);
+
+          // Variable properties
+          const size_t varNz0 = centralVars()[var1].getLevels();
+          const size_t z0Offset = getZ0Offset(var1);
+
+          // Layer multiplication
+          data_[jg][jBin]->multiplySqrt(cv, grpField, index);
+
+          // Apply weight square-root and normalization
+          const atlas::Field wgtSqrtField = (*weight_[jBin])[groups_[jg].name_];
+          const auto wgtSqrtView = atlas::array::make_view<double, 2>(wgtSqrtField);
+          const atlas::Field normField = (*normalization_[jBin])[groups_[jg].name_];
+          const auto normView = atlas::array::make_view<double, 2>(normField);
+          for (size_t jnode0 = 0; jnode0 < nodes0_; ++jnode0) {
+            if (ghostView(jnode0) == 0) {
+              for (size_t jz0 = 0; jz0 < groups_[jg].nz0_; ++jz0) {
+                grpView(jnode0, jz0) *= wgtSqrtView(jnode0, jz0)*normView(jnode0, jz0);
+              }
+            }
+          }
+
+          // Apply weighted result on all variables of the group
+          for (const auto & var2 : groups_[jg].variables_) {
+            // Get variable 2 index
+            const size_t jv2 = centralVars().find(var2);
+            if (jv2 >= jv1) {
+              // Copy group field
+              atlas::Field binField = fsetBin[var2];
+              auto binView = atlas::array::make_view<double, 2>(binField);
+              for (size_t jnode0 = 0; jnode0 < nodes0_; ++jnode0) {
+                if (ghostView(jnode0) == 0) {
+                  for (size_t jz0 = 0; jz0 < varNz0; ++jz0) {
+                    binView(jnode0, jz0) += locWgtSqrt_(jv2, jv1)*grpView(jnode0, z0Offset+jz0);
+                  }
+                }
+              }
+            }
+          }
+
+          // Update control vector index
+          index += data_[jg][jBin]->ctlVecSize();
+        }
       }
     } else if (params_.strategy.value() == "crossed") {
+      // Crossed strategy
       for (size_t jg = 0; jg < groups_.size(); ++jg) {
         // Create group field
         atlas::Field grpField = geometryData().functionSpace().createField<double>(
@@ -494,6 +560,61 @@ void FastLAM::multiplySqrtAD(const oops::FieldSet3D & fset,
         // Update control vector index
         index += data_[jg][jBin]->ctlVecSize();
       }
+    } else if (params_.strategy.value() == "duplicated and weighted") {
+      // Duplicated and weighted strategy
+      for (size_t jg = 0; jg < groups_.size(); ++jg) {
+        // Create group field
+        atlas::Field grpField = geometryData().functionSpace().createField<double>(
+          atlas::option::name(groups_[jg].name_) | atlas::option::levels(groups_[jg].nz0_));
+        auto grpView = atlas::array::make_view<double, 2>(grpField);
+
+        for (const auto & var1 : groups_[jg].variables_) {
+          // Get variable 1 index
+          const size_t jv1 = centralVars().find(var1);
+
+          // Variable properties
+          const size_t varNz0 = centralVars()[var1].getLevels();
+          const size_t z0Offset = getZ0Offset(var1);
+
+          // Apply weighted result on all variables of the group
+          grpView.assign(0.0);
+          for (const auto & var2 : groups_[jg].variables_) {
+            // Get variable 2 index
+            const size_t jv2 = centralVars().find(var2);
+            if (jv2 >= jv1) {
+              // Copy group field
+              atlas::Field binField = fsetBin[var2];
+              auto binView = atlas::array::make_view<double, 2>(binField);
+              for (size_t jnode0 = 0; jnode0 < nodes0_; ++jnode0) {
+                if (ghostView(jnode0) == 0) {
+                  for (size_t jz0 = 0; jz0 < varNz0; ++jz0) {
+                    grpView(jnode0, z0Offset+jz0) += locWgtSqrt_(jv2, jv1)*binView(jnode0, jz0);
+                  }
+                }
+              }
+            }
+          }
+
+          // Apply weight square-root and normalization
+          const atlas::Field wgtSqrtField = (*weight_[jBin])[groups_[jg].name_];
+          const auto wgtSqrtView = atlas::array::make_view<double, 2>(wgtSqrtField);
+          const atlas::Field normField = (*normalization_[jBin])[groups_[jg].name_];
+          const auto normView = atlas::array::make_view<double, 2>(normField);
+          for (size_t jnode0 = 0; jnode0 < nodes0_; ++jnode0) {
+            if (ghostView(jnode0) == 0) {
+              for (size_t jz0 = 0; jz0 < groups_[jg].nz0_; ++jz0) {
+                grpView(jnode0, jz0) *= wgtSqrtView(jnode0, jz0)*normView(jnode0, jz0);
+              }
+            }
+          }
+
+          // Layer multiplication
+          data_[jg][jBin]->multiplySqrtTrans(grpField, cv, index);
+
+          // Update control vector index
+          index += data_[jg][jBin]->ctlVecSize();
+        }
+      }
     } else if (params_.strategy.value() == "crossed") {
       // Crossed strategy
       for (size_t jg = 0; jg < groups_.size(); ++jg) {
@@ -567,7 +688,7 @@ std::vector<std::pair<std::string, eckit::LocalConfiguration>> FastLAM::getReadC
   oops::Log::trace() << classname() << "::getReadConfs starting" << std::endl;
 
   std::vector<std::pair<std::string, eckit::LocalConfiguration>> inputs;
-  if (params_.inputModelFilesConf.value() != boost::none) {
+  if (params_.inputModelFilesConf.value()) {
     for (const auto & conf : *params_.inputModelFilesConf.value()) {
       // Get parameter
       const std::string param = conf.getString("parameter");
@@ -767,7 +888,7 @@ void FastLAM::directCalibration(const oops::FieldSets &) {
   oops::Log::trace() << classname() << "::calibration starting" << std::endl;
 
   // Get number of layers
-  ASSERT(params_.nLayers.value() != boost::none);
+  ASSERT(params_.nLayers.value());
   size_t nLayers = *params_.nLayers.value();
 
   // Allocate data
@@ -799,7 +920,7 @@ void FastLAM::directCalibration(const oops::FieldSets &) {
   setupResolution();
 
   // Setup reduction factors
-  setupReductionFactors();
+  setupReducedGrids();
 
   for (size_t jg = 0; jg < groups_.size(); ++jg) {
     oops::Log::info() << "Info     : Setup of group " << groups_[jg].name_ << ":" << std::endl;
@@ -846,6 +967,12 @@ void FastLAM::directCalibration(const oops::FieldSets &) {
     weight_[jBin]->sqrt();
   }
 
+  // Setup control vector size
+  setupCtlVecSize();
+
+  // Setup remote index
+  setupGlbIndex();
+
   oops::Log::trace() << classname() << "::calibration done" << std::endl;
 }
 
@@ -855,7 +982,7 @@ void FastLAM::read() {
   oops::Log::trace() << classname() << "::read starting" << std::endl;
 
   if (comm_.rank() == 0) {
-    ASSERT(params_.dataFile.value() != boost::none);
+    ASSERT(params_.dataFile.value());
 
     // NetCDF ids
     int retval, ncid, grpGrpId, layerGrpId;
@@ -894,7 +1021,7 @@ void FastLAM::read() {
   }
 
   // Setup reduction factors
-  setupReductionFactors();
+  setupReducedGrids();
 
   for (size_t jg = 0; jg < groups_.size(); ++jg) {
     oops::Log::info() << "Info     : Setup of group " << groups_[jg].name_ << ":" << std::endl;
@@ -931,6 +1058,12 @@ void FastLAM::read() {
     weight_[jBin]->sqrt();
   }
 
+  // Setup control vector size
+  setupCtlVecSize();
+
+  // Setup remote index
+  setupGlbIndex();
+
   oops::Log::trace() << classname() << "::read done" << std::endl;
 }
 
@@ -939,7 +1072,7 @@ void FastLAM::read() {
 void FastLAM::write() const {
   oops::Log::trace() << classname() << "::write starting" << std::endl;
 
-  if (comm_.rank() == 0 && (params_.dataFile.value() != boost::none)) {
+  if (comm_.rank() == 0 && (params_.dataFile.value())) {
     // NetCDF ids
     int retval, ncid, grpGrpId, layerGrpId;
     std::vector<std::array<int, 8>> grpIdsVec;
@@ -1157,7 +1290,7 @@ void FastLAM::setupLengthScales() {
 
   // Get rh and rv from yaml
   if (!rh_) {
-    ASSERT(params_.rhFromYaml.value() != boost::none);
+    ASSERT(params_.rhFromYaml.value());
     rh_.reset(new oops::FieldSet3D(validTime_, comm_));
     for (size_t jg = 0; jg < groups_.size(); ++jg) {
       // Get yaml value/profile
@@ -1169,14 +1302,14 @@ void FastLAM::setupLengthScales() {
             throw eckit::UserError("group" + groups_[jg].name_ + " present more that once", Here());
           }
           profile.resize(groups_[jg].nz0_);
-          if (vParams.value.value() != boost::none
-            && vParams.profile.value() != boost::none) {
+          if (vParams.value.value()
+            && vParams.profile.value()) {
             throw eckit::UserError("both value and profile present in the same item", Here());
           }
-          if (vParams.value.value() != boost::none) {
+          if (vParams.value.value()) {
             // Copy value
             std::fill(profile.begin(), profile.end(), *vParams.value.value());
-          } else if (vParams.profile.value() != boost::none) {
+          } else if (vParams.profile.value()) {
             // Copy profile
             ASSERT(vParams.profile.value()->size() == groups_[jg].nz0_);
             profile = *vParams.profile.value();
@@ -1204,7 +1337,7 @@ void FastLAM::setupLengthScales() {
   }
 
   if (!rv_) {
-    ASSERT(params_.rvFromYaml.value() != boost::none);
+    ASSERT(params_.rvFromYaml.value());
     rv_.reset(new oops::FieldSet3D(validTime_, comm_));
     for (size_t jg = 0; jg < groups_.size(); ++jg) {
       // Get yaml value/profile
@@ -1216,14 +1349,14 @@ void FastLAM::setupLengthScales() {
             throw eckit::UserError("group" + groups_[jg].name_ + " present more that once", Here());
           }
           profile.resize(groups_[jg].nz0_);
-          if (vParams.value.value() != boost::none
-            && vParams.profile.value() != boost::none) {
+          if (vParams.value.value()
+            && vParams.profile.value()) {
             throw eckit::UserError("both value and profile present in the same item", Here());
           }
-          if (vParams.value.value() != boost::none) {
+          if (vParams.value.value()) {
             // Copy value
             std::fill(profile.begin(), profile.end(), *vParams.value.value());
-          } else if (vParams.profile.value() != boost::none) {
+          } else if (vParams.profile.value()) {
             // Copy profile
             ASSERT(vParams.profile.value()->size() == groups_[jg].nz0_);
             profile = *vParams.profile.value();
@@ -1321,6 +1454,25 @@ void FastLAM::setupWeight() {
   const auto indexX0View = atlas::array::make_indexview<int, 1>(fs.index_i());
   const auto indexY0View = atlas::array::make_indexview<int, 1>(fs.index_j());
 
+  // Get grid cell size field
+  cellSizeField_.resize(nodes0_);
+  for (size_t jnode0 = 0; jnode0 < nodes0_; ++jnode0) {
+    if (ghostView(jnode0) == 0) {
+      // Cell area
+      const int i0 = indexX0View(jnode0);
+      const int j0 = indexY0View(jnode0);
+      const int im = std::min(std::max(i0-1, 0), static_cast<int>(nx0_-1));
+      const int ip = std::min(std::max(i0+1, 0), static_cast<int>(nx0_-1));
+      const int jm = std::min(std::max(j0-1, 0), static_cast<int>(ny0_-1));
+      const int jp = std::min(std::max(j0+1, 0), static_cast<int>(ny0_-1));
+      const double dx = atlas::util::Earth().distance(grid.lonlat(ip, j0), grid.lonlat(im, j0))
+        /static_cast<double>(ip-im);
+      const double dy = atlas::util::Earth().distance(grid.lonlat(i0, jp), grid.lonlat(i0, jm))
+        /static_cast<double>(jp-jm);
+      cellSizeField_[jnode0] = std::sqrt(dx*dy);
+    }
+  }
+
   // Normalize rh
   for (size_t jg = 0; jg < groups_.size(); ++jg) {
     atlas::Field rhField = (*rh_)[groups_[jg].name_];
@@ -1328,21 +1480,9 @@ void FastLAM::setupWeight() {
 
     for (size_t jnode0 = 0; jnode0 < nodes0_; ++jnode0) {
       if (ghostView(jnode0) == 0) {
-        // Cell area
-        const int i0 = indexX0View(jnode0);
-        const int j0 = indexY0View(jnode0);
-        const int im = std::min(std::max(i0-1, 0), static_cast<int>(nx0_-1));
-        const int ip = std::min(std::max(i0+1, 0), static_cast<int>(nx0_-1));
-        const int jm = std::min(std::max(j0-1, 0), static_cast<int>(ny0_-1));
-        const int jp = std::min(std::max(j0+1, 0), static_cast<int>(ny0_-1));
-        const double dx = atlas::util::Earth().distance(grid.lonlat(ip, j0), grid.lonlat(im, j0))
-          /static_cast<double>(ip-im);
-        const double dy = atlas::util::Earth().distance(grid.lonlat(i0, jp), grid.lonlat(i0, jm))
-          /static_cast<double>(jp-jm);
-
         // Normalize rh with cell area square-root
         for (size_t jz0 = 0; jz0 < groups_[jg].nz0_; ++jz0) {
-          rhView(jnode0, jz0) = rhView(jnode0, jz0)/std::sqrt(dx*dy);
+          rhView(jnode0, jz0) = rhView(jnode0, jz0)/cellSizeField_[jnode0];
         }
       }
     }
@@ -1451,7 +1591,7 @@ void FastLAM::setupResolution() {
   // Copy resolution
   for (size_t jBin = 0; jBin < weight_.size(); ++jBin) {
     for (size_t jg = 0; jg < groups_.size(); ++jg) {
-      ASSERT(params_.resol.value() != boost::none);
+      ASSERT(params_.resol.value());
       data_[jg][jBin]->resol() = *params_.resol.value();
     }
   }
@@ -1461,14 +1601,67 @@ void FastLAM::setupResolution() {
 
 // -----------------------------------------------------------------------------
 
-void FastLAM::setupReductionFactors() {
-  oops::Log::trace() << classname() << "::setupReductionFactors starting" << std::endl;
+void FastLAM::setupReducedGrids() {
+  oops::Log::trace() << classname() << "::setupReducedGrids starting" << std::endl;
+
+  // Initialize sampling length-scales
+  if (params_.srhFromYaml.value()) {
+    // Ghost points
+    const auto ghostView = atlas::array::make_view<int, 1>(geometryData().functionSpace().ghost());
+
+    // Get min/max cell sizes
+    double minCellSize = std::numeric_limits<double>::max();
+    double maxCellSize = std::numeric_limits<double>::min();
+    for (size_t jnode0 = 0; jnode0 < nodes0_; ++jnode0) {
+      if (ghostView(jnode0) == 0) {
+        minCellSize = std::min(minCellSize, cellSizeField_[jnode0]);
+        maxCellSize = std::max(maxCellSize, cellSizeField_[jnode0]);
+      }
+    }
+    comm_.allReduceInPlace(minCellSize, eckit::mpi::min());
+    comm_.allReduceInPlace(maxCellSize, eckit::mpi::max());
+
+    // Average value
+    double srh = *params_.srhFromYaml.value();
+    srh = 0.5*(srh/minCellSize + srh/maxCellSize);
+
+    // Copy input value to srh_
+    for (size_t jg = 0; jg < groups_.size(); ++jg) {
+      for (size_t jBin = 0; jBin < weight_.size(); ++jBin) {
+        data_[jg][jBin]->srh() = srh;
+      }
+    }
+  } else {
+    // Copy rh_ to srh_
+    for (size_t jg = 0; jg < groups_.size(); ++jg) {
+      for (size_t jBin = 0; jBin < weight_.size(); ++jBin) {
+        data_[jg][jBin]->srh() = data_[jg][jBin]->rh();
+      }
+    }
+  }
+  if (params_.srvFromYaml.value()) {
+    // Copy input value to srv_
+    for (size_t jg = 0; jg < groups_.size(); ++jg) {
+      for (size_t jBin = 0; jBin < weight_.size(); ++jBin) {
+        data_[jg][jBin]->srv() = *params_.srvFromYaml.value();
+      }
+    }
+  } else {
+    // Copy rv_ to srv_
+    for (size_t jg = 0; jg < groups_.size(); ++jg) {
+      for (size_t jBin = 0; jBin < weight_.size(); ++jBin) {
+        data_[jg][jBin]->srv() = data_[jg][jBin]->rv();
+      }
+    }
+  }
 
   for (size_t jBin = 0; jBin < weight_.size(); ++jBin) {
-    // Define reduction factors
+    // Define reduction factors from sampling length-scales
+    std::vector<double> rfh(groups_.size());
+    std::vector<double> rfv(groups_.size());
     for (size_t jg = 0; jg < groups_.size(); ++jg) {
-      data_[jg][jBin]->rfh() = std::max(data_[jg][jBin]->rh()/data_[jg][jBin]->resol(), 1.0);
-      data_[jg][jBin]->rfv() = std::max(data_[jg][jBin]->rv()/data_[jg][jBin]->resol(), 1.0);
+      rfh[jg] = std::max(data_[jg][jBin]->srh()/data_[jg][jBin]->resol(), 1.0);
+      rfv[jg] = std::max(data_[jg][jBin]->srv()/data_[jg][jBin]->resol(), 1.0);
     }
 
     if (params_.strategy.value() == "crossed") {
@@ -1476,17 +1669,117 @@ void FastLAM::setupReductionFactors() {
       double rfhMin = 1.0;
       double rfvMin = 1.0;
       for (size_t jg = 0; jg < groups_.size(); ++jg) {
-        rfhMin = std::min(data_[jg][jBin]->rfh(), rfhMin);
-        rfvMin = std::min(data_[jg][jBin]->rfv(), rfvMin);
+        rfhMin = std::min(rfh[jg], rfhMin);
+        rfvMin = std::min(rfv[jg], rfvMin);
       }
       for (size_t jg = 0; jg < groups_.size(); ++jg) {
-        data_[jg][jBin]->rfh() = rfhMin;
-        data_[jg][jBin]->rfv() = rfvMin;
+        rfh[jg] = rfhMin;
+        rfv[jg] = rfvMin;
+      }
+    }
+
+    // Define reduced grid sizes
+    for (size_t jg = 0; jg < groups_.size(); ++jg) {
+      data_[jg][jBin]->nx() = std::min(nx0Bkg_,
+        static_cast<size_t>(static_cast<double>(nx0Bkg_-1)/rfh[jg])+2);
+      data_[jg][jBin]->ny() = std::min(ny0Bkg_,
+        static_cast<size_t>(static_cast<double>(ny0Bkg_-1)/rfh[jg])+2);
+      data_[jg][jBin]->nz() = std::min(groups_[jg].nz0_,
+        static_cast<size_t>(static_cast<double>(groups_[jg].nz0_-1)/rfv[jg])+2);
+    }
+  }
+
+  oops::Log::trace() << classname() << "::setupReducedGrids done" << std::endl;
+}
+
+// -----------------------------------------------------------------------------
+
+void FastLAM::setupCtlVecSize() {
+  oops::Log::trace() << classname() << "::setupCtlVecSize starting" << std::endl;
+
+  // Initialization
+  ctlVecSize_ = 0;
+
+  // Loop over bins
+  for (size_t jBin = 0; jBin < weight_.size(); ++jBin) {
+    // Loop over groups
+    for (size_t jg = 0; jg < groups_.size(); ++jg) {
+      if (params_.strategy.value() == "univariate") {
+        // Univariate strategy
+        ctlVecSize_ += data_[jg][jBin]->ctlVecSize()*groups_[jg].variables_.size();
+      } else if (params_.strategy.value() == "duplicated") {
+        // Duplicated strategy
+        ctlVecSize_ += data_[jg][jBin]->ctlVecSize();
+      } else if (params_.strategy.value() == "crossed") {
+        // Crossed strategy
+        if (jg == 0) {
+          ctlVecSize_ += data_[jg][jBin]->ctlVecSize();
+        } else {
+          ASSERT(data_[jg][jBin]->ctlVecSize() == data_[0][jBin]->ctlVecSize());
+        }
+      } else {
+        // Wrong multivariate strategy
+        throw eckit::UserError("wrong multivariate strategy: " + params_.strategy.value(), Here());
       }
     }
   }
 
-  oops::Log::trace() << classname() << "::setupReductionFactors done" << std::endl;
+  oops::Log::trace() << classname() << "::setupCtlVecSize done" << std::endl;
+}
+
+// -----------------------------------------------------------------------------
+
+void FastLAM::setupGlbIndex() {
+  oops::Log::trace() << classname() << "::setupGlbIndex starting" << std::endl;
+
+  // Initialize offset
+  int offset = 0;
+
+  // Loop over bins
+  for (size_t jBin = 0; jBin < weight_.size(); ++jBin) {
+    // Loop over groups
+    for (size_t jg = 0; jg < groups_.size(); ++jg) {
+      // Get partial remote index
+      std::vector<int> partialGlbIndex = data_[jg][jBin]->ctlVecGlbIndex();
+
+      // Get global control vector size
+      int ctlVecGlbSize;
+      comm_.allReduce(static_cast<int>(data_[jg][jBin]->ctlVecSize()), ctlVecGlbSize,
+        eckit::mpi::sum());
+
+      if (params_.strategy.value() == "univariate") {
+        // Univariate strategy
+        for (size_t jvar = 0; jvar < groups_[jg].variables_.size(); ++jvar) {
+          for (size_t jcv = 0; jcv < data_[jg][jBin]->ctlVecSize(); ++jcv) {
+            glbIndex_.push_back(partialGlbIndex[jcv]+offset);
+          }
+          offset += ctlVecGlbSize;
+        }
+      } else if (params_.strategy.value() == "duplicated") {
+        // Duplicated strategy
+        for (size_t jcv = 0; jcv < data_[jg][jBin]->ctlVecSize(); ++jcv) {
+         glbIndex_.push_back(partialGlbIndex[jcv]+offset);
+        }
+        offset += ctlVecGlbSize;
+      } else if (params_.strategy.value() == "crossed") {
+        // Crossed strategy
+        if (jg == 0) {
+          for (size_t jcv = 0; jcv < data_[jg][jBin]->ctlVecSize(); ++jcv) {
+            glbIndex_.push_back(partialGlbIndex[jcv]+offset);
+          }
+          offset += ctlVecGlbSize;
+        }
+      } else {
+        // Wrong multivariate strategy
+        throw eckit::UserError("wrong multivariate strategy: " + params_.strategy.value(), Here());
+      }
+    }
+  }
+
+  // Check final size
+  ASSERT(glbIndex_.size() == ctlVecSize_);
+
+  oops::Log::trace() << classname() << "::setupGlbIndex done" << std::endl;
 }
 
 // -----------------------------------------------------------------------------

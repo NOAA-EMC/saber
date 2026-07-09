@@ -468,16 +468,13 @@ void BUMP::writeAtlasFiles() const {
     std::vector<eckit::LocalConfiguration> outputAtlasFilesConf
       = bumpConf_.getSubConfigurations("output atlas files");
     for (const auto & output : this->fieldsToWrite(outputAtlasFilesConf)) {
-      // Get file configuration
-      eckit::LocalConfiguration file = this->getFileConf(comm_, output.first);
-
       // Print FieldSet norm
       oops::Log::test() << "+++ Norm of output parameter " << output.second.name() << ": "
                         << output.second.norm(vars_)
                         << std::endl;
 
       // Write FieldSet
-      output.second.write(file);
+      output.second.write(output.first);
     }
   }
 
@@ -608,30 +605,6 @@ void BUMP::inverseMultiplyStdDev(oops::FieldSet3D & fset) const {
 
 // -----------------------------------------------------------------------------
 
-void BUMP::randomizeNicas(oops::FieldSet3D & fset) const {
-  oops::Log::trace() << classname() << "::randomizeNicas starting" << std::endl;
-
-  for (size_t jgrid = 0; jgrid < keyBUMP_.size(); ++jgrid) {
-    bump_randomize_f90(keyBUMP_[jgrid], fset.get());
-  }
-
-  oops::Log::trace() << classname() << "::randomizeNicas done" << std::endl;
-}
-
-// -----------------------------------------------------------------------------
-
-void BUMP::multiplyNicas(oops::FieldSet3D & fset) const {
-  oops::Log::trace() << classname() << "::multiplyNicas starting" << std::endl;
-
-  for (size_t jgrid = 0; jgrid < keyBUMP_.size(); ++jgrid) {
-    bump_apply_nicas_f90(keyBUMP_[jgrid], fset.get());
-  }
-
-  oops::Log::trace() << classname() << "::multiplyNicas done" << std::endl;
-}
-
-// -----------------------------------------------------------------------------
-
 void BUMP::filterNicas(oops::FieldSet3D & fset) const {
   oops::Log::trace() << classname() << "::filterNicas starting" << std::endl;
 
@@ -680,6 +653,23 @@ size_t BUMP::getCvSize() const {
 
   oops::Log::trace() << classname() << "::getCvSize done" << std::endl;
   return n;
+}
+
+// -----------------------------------------------------------------------------
+
+void BUMP::randomCv(atlas::Field & cv,
+                    const size_t & offset) const {
+  oops::Log::trace() << classname() << "::randomCv starting" << std::endl;
+
+  int index = offset;
+  for (unsigned int jgrid = 0; jgrid < keyBUMP_.size(); ++jgrid) {
+    bump_random_cv_f90(keyBUMP_[jgrid], cv.get(), index);
+    int nTmp;
+    bump_get_cv_size_f90(keyBUMP_[jgrid], nTmp);
+    index += nTmp;
+  }
+
+  oops::Log::trace() << classname() << "::randomCv done" << std::endl;
 }
 
 // -----------------------------------------------------------------------------

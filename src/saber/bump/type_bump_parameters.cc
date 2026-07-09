@@ -130,6 +130,8 @@ void bump_config_init_f90(eckit::LocalConfiguration * config) {
   param(driversDef.write_hdiag, driversConf);
   // Write HDIAG components detail
   param(driversDef.write_hdiag_detail, driversConf);
+  // Write HDIAG diagnostics in yaml file
+  param(driversDef.write_hdiag_yaml, driversConf);
   // Read universe radius
   param(driversDef.load_universe_radius, driversConf);
   // Write universe radius
@@ -310,8 +312,6 @@ void bump_config_init_f90(eckit::LocalConfiguration * config) {
   param(nicasDef.nicas_si_factor, nicasConf);
   // Normalization randomization size
   param(nicasDef.norm_rand_size, nicasConf);
-  // Positive-definiteness test
-  param(nicasDef.pos_def_test, nicasConf);
   // Horizontal NICAS interpolation test
   param(nicasDef.interp_test, nicasConf);
   // Overriding component in file

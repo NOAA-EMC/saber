@@ -208,6 +208,10 @@ struct DriversDef {
   std::pair<const char *, bool> write_hdiag_detail =
     std::make_pair("write diagnostics detail", false);
 
+  // Write HDIAG diagnostics in yaml file
+  std::pair<const char *, bool> write_hdiag_yaml =
+    std::make_pair("write diagnostics in yaml", false);
+
   // Read universe radius
   std::pair<const char *, bool> load_universe_radius =
     std::make_pair("read universe radius", false);
@@ -550,10 +554,6 @@ struct NICASDef {
   // Normalization randomization size
   std::pair<const char *, int> norm_rand_size =
     std::make_pair("normalization randomization size", 0);
-
-  // Positive-definiteness test
-  std::pair<const char *, bool> pos_def_test =
-    std::make_pair("positive-definiteness test", false);
 
   // Horizontal NICAS interpolation test
   std::pair<const char *, bool> interp_test =

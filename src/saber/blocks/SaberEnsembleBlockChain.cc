@@ -14,7 +14,7 @@ namespace saber {
 // -----------------------------------------------------------------------------
 
 void SaberEnsembleBlockChain::multiply(oops::FieldSet4D & fset4d) const {
-  oops::Log::trace() << "saber::generic::SaberEnsembleBlockChain::multiply starting" << std::endl;
+  oops::Log::trace() << "saber::SaberEnsembleBlockChain::multiply starting" << std::endl;
 
   // Outer blocks adjoint multiplication
   if (outerBlockChain_) {
@@ -58,21 +58,19 @@ void SaberEnsembleBlockChain::multiply(oops::FieldSet4D & fset4d) const {
     // ensemble members distributed across MPI tasks.
   }
 
-  // Normalize result
-  const double rk = 1.0/static_cast<double>(ensemble_->ens_size()-1);
-  fset4d *= rk;
-
   // Outer blocks forward multiplication
   if (outerBlockChain_) {
     outerBlockChain_->applyOuterBlocks(fset4d);
   }
 
-  oops::Log::trace() << "saber::generic::SaberEnsembleBlockChain::multiply done" << std::endl;
+  oops::Log::trace() << "saber::SaberEnsembleBlockChain::multiply done" << std::endl;
 }
 
 // -----------------------------------------------------------------------------
 
 void SaberEnsembleBlockChain::randomize(oops::FieldSet4D & fset4d) const {
+  oops::Log::trace() << "saber::SaberEnsembleBlockChain::randomize starting" << std::endl;
+
   // Central block: randomization with ensemble covariance
   fset4d.deepCopy(*ensemble_, 0);
   fset4d.zero();
@@ -110,14 +108,33 @@ void SaberEnsembleBlockChain::randomize(oops::FieldSet4D & fset4d) const {
     fset4d += fset4dMem;
   }
 
-  // Normalize result
-  const double rk = 1.0/sqrt(static_cast<double>(ensemble_->ens_size()-1));
-  fset4d *= rk;
-
   // Outer blocks forward multiplication
   if (outerBlockChain_) {
     outerBlockChain_->applyOuterBlocks(fset4d);
   }
+
+  oops::Log::trace() << "saber::SaberEnsembleBlockChain::randomize done" << std::endl;
+}
+
+// -----------------------------------------------------------------------------
+
+size_t SaberEnsembleBlockChain::ctlVecSize() const {
+  oops::Log::trace() << "saber::SaberEnsembleBlockChain::ctlVecSize starting" << std::endl;
+
+  // Initialize control vector size
+  size_t ctlVecSize = 0;
+
+  // Get control vector size
+  if (locBlockChain_) {
+    // With localization
+    ctlVecSize = ensemble_->ens_size()*locBlockChain_->ctlVecSize();
+  } else {
+    // Without localization
+    ctlVecSize = ensemble_->ens_size();
+  }
+
+  oops::Log::trace() << "saber::SaberEnsembleBlockChain::ctlVecSize done" << std::endl;
+  return ctlVecSize;
 }
 
 // -----------------------------------------------------------------------------
@@ -125,8 +142,7 @@ void SaberEnsembleBlockChain::randomize(oops::FieldSet4D & fset4d) const {
 void SaberEnsembleBlockChain::multiplySqrt(const atlas::Field & cv,
                                            oops::FieldSet4D & fset4d,
                                            const size_t & offset) const {
-  oops::Log::trace() << "saber::generic::SaberEnsembleBlockChain::multiplySqrt starting"
-                     << std::endl;
+  oops::Log::trace() << "saber::SaberEnsembleBlockChain::multiplySqrt starting" << std::endl;
 
   // Initialization
   fset4d.zero();
@@ -160,17 +176,12 @@ void SaberEnsembleBlockChain::multiplySqrt(const atlas::Field & cv,
     fset4d += fset4dMem;
   }
 
-  // Normalize result
-  const double rk = 1.0/std::sqrt(static_cast<double>(ensemble_->ens_size()-1));
-  fset4d *= rk;
-
   // Outer blocks forward multiplication
   if (outerBlockChain_) {
     outerBlockChain_->applyOuterBlocks(fset4d);
   }
 
-  oops::Log::trace() << "saber::generic::SaberEnsembleBlockChain::multiplySqrt done"
-                     << std::endl;
+  oops::Log::trace() << "saber::SaberEnsembleBlockChain::multiplySqrt done" << std::endl;
 }
 
 // -----------------------------------------------------------------------------
@@ -178,8 +189,7 @@ void SaberEnsembleBlockChain::multiplySqrt(const atlas::Field & cv,
 void SaberEnsembleBlockChain::multiplySqrtAD(const oops::FieldSet4D & fset4d,
                                              atlas::Field & cv,
                                              const size_t & offset) const {
-  oops::Log::trace() << "saber::generic::SaberEnsembleBlockChain::multiplySqrtAD starting"
-                     << std::endl;
+  oops::Log::trace() << "saber::SaberEnsembleBlockChain::multiplySqrtAD starting" << std::endl;
 
   // Copy input FieldSet
   oops::FieldSet4D fset4dInit = oops::copyFieldSet4D(fset4d);
@@ -188,10 +198,6 @@ void SaberEnsembleBlockChain::multiplySqrtAD(const oops::FieldSet4D & fset4d,
   if (outerBlockChain_) {
     outerBlockChain_->applyOuterBlocksAD(fset4dInit);
   }
-
-  // Normalize initial fieldset
-  const double rk = 1.0/std::sqrt(static_cast<double>(ensemble_->ens_size()-1));
-  fset4dInit *= rk;
 
   // Initialization
   size_t index = offset;
@@ -222,8 +228,7 @@ void SaberEnsembleBlockChain::multiplySqrtAD(const oops::FieldSet4D & fset4d,
     }
   }
 
-  oops::Log::trace() << "saber::generic::SaberEnsembleBlockChain::multiplySqrtAD done"
-                     << std::endl;
+  oops::Log::trace() << "saber::SaberEnsembleBlockChain::multiplySqrtAD done" << std::endl;
 }
 
 // -----------------------------------------------------------------------------
