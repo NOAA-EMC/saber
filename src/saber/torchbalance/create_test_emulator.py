@@ -490,7 +490,6 @@ if __name__ == "__main__":
         output_path=str(output_dir / "nonlocal_emulator.ts")
     )
     print()
-
     print("\nTest suite created!")
     print("\nExpected matrix structure (surface):")
     print("                       sst    qv    tair")
