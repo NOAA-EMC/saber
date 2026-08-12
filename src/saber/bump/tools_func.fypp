@@ -1265,6 +1265,7 @@ integer :: iproc
 @:probe_in()
 
 ! Find processor
+iproc = 0
 do iproc=1,nproc-1
    if ((proc_to_cx_offset(iproc)<icx).and.(icx<=proc_to_cx_offset(iproc+1))) then
 @:probe_out()

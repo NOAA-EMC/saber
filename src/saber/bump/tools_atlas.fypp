@@ -336,6 +336,8 @@ type(atlas_functionspace_structuredcolumns) :: afunctionspace_sc
 ! Probe in
 @:probe_in()
 
+nmga = 0
+
 select case (afunctionspace%name())
 case ('NodeColumns')
    ! Get NodeColumns function space

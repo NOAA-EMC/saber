@@ -1049,9 +1049,9 @@ void BifourierTransform::setupGlobalSpectralSpace() {
   addSpectralCoefficient(jk, jl, ReRe, 0, 0);
 
   // 0 < l < nl_-1
-  for (size_t jl = 1; jl < nl_-1; ++jl) {
-    addSpectralCoefficient(jk, jl, ReRe, 0, 1);
-    addSpectralCoefficient(jk, jl, ReIm, 0, -1);
+  for (size_t jlLoop = 1; jlLoop < nl_-1; ++jlLoop) {
+    addSpectralCoefficient(jk, jlLoop, ReRe, 0, 1);
+    addSpectralCoefficient(jk, jlLoop, ReIm, 0, -1);
   }
 
   // l = nl_-1
@@ -1064,30 +1064,30 @@ void BifourierTransform::setupGlobalSpectralSpace() {
   }
 
   // 0 < k < nk_-1
-  for (size_t jk = 1; jk < nk_-1; ++jk) {
+  for (size_t jkLoop = 1; jkLoop < nk_-1; ++jkLoop) {
     // l = 0
     jl = 0;
-    addSpectralCoefficient(jk, jl, ReRe, 1, 0);
-    addSpectralCoefficient(jk, jl, ImRe, -1, 0);
+    addSpectralCoefficient(jkLoop, jl, ReRe, 1, 0);
+    addSpectralCoefficient(jkLoop, jl, ImRe, -1, 0);
 
     // 0 < l < nl_-1
-    for (size_t jl = 1; jl < nl_-1; ++jl) {
-      addSpectralCoefficient(jk, jl, ReRe, 2, 1);
-      addSpectralCoefficient(jk, jl, ReIm, 2, -1);
-      addSpectralCoefficient(jk, jl, ImRe, -2, 1);
-      addSpectralCoefficient(jk, jl, ImIm, -2, -1);
+    for (size_t jlLoop = 1; jlLoop < nl_-1; ++jlLoop) {
+      addSpectralCoefficient(jkLoop, jlLoop, ReRe, 2, 1);
+      addSpectralCoefficient(jkLoop, jlLoop, ReIm, 2, -1);
+      addSpectralCoefficient(jkLoop, jlLoop, ImRe, -2, 1);
+      addSpectralCoefficient(jkLoop, jlLoop, ImIm, -2, -1);
     }
 
     // l = nl_-1
     jl = nl_-1;
     if (ny_ % 2 == 1) {
-      addSpectralCoefficient(jk, jl, ReRe, 2, 1);
-      addSpectralCoefficient(jk, jl, ReIm, 2, -1);
-      addSpectralCoefficient(jk, jl, ImRe, -2, 1);
-      addSpectralCoefficient(jk, jl, ImIm, -2, -1);
+      addSpectralCoefficient(jkLoop, jl, ReRe, 2, 1);
+      addSpectralCoefficient(jkLoop, jl, ReIm, 2, -1);
+      addSpectralCoefficient(jkLoop, jl, ImRe, -2, 1);
+      addSpectralCoefficient(jkLoop, jl, ImIm, -2, -1);
     } else {
-      addSpectralCoefficient(jk, jl, ReRe, 1, 0);
-      addSpectralCoefficient(jk, jl, ImRe, -1, 0);
+      addSpectralCoefficient(jkLoop, jl, ReRe, 1, 0);
+      addSpectralCoefficient(jkLoop, jl, ImRe, -1, 0);
     }
   }
 
@@ -1104,15 +1104,15 @@ void BifourierTransform::setupGlobalSpectralSpace() {
   }
 
   // 0 < l < nl_-1
-  for (size_t jl = 1; jl < nl_-1; ++jl) {
+  for (size_t jlLoop = 1; jlLoop < nl_-1; ++jlLoop) {
     if (nx_ % 2 == 1) {
-      addSpectralCoefficient(jk, jl, ReRe, 2, 1);
-      addSpectralCoefficient(jk, jl, ReIm, 2, -1);
-      addSpectralCoefficient(jk, jl, ImRe, -2, 1);
-      addSpectralCoefficient(jk, jl, ImIm, -2, -1);
+      addSpectralCoefficient(jk, jlLoop, ReRe, 2, 1);
+      addSpectralCoefficient(jk, jlLoop, ReIm, 2, -1);
+      addSpectralCoefficient(jk, jlLoop, ImRe, -2, 1);
+      addSpectralCoefficient(jk, jlLoop, ImIm, -2, -1);
     } else {
-      addSpectralCoefficient(jk, jl, ReRe, 0, 1);
-      addSpectralCoefficient(jk, jl, ReIm, 0, -1);
+      addSpectralCoefficient(jk, jlLoop, ReRe, 0, 1);
+      addSpectralCoefficient(jk, jlLoop, ReIm, 0, -1);
     }
   }
 
