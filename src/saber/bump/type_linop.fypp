@@ -958,7 +958,7 @@ end if
 linop%n_src = n_src
 linop%n_dst = n_dst
 call linop%alloc
-if (allocated(bnda%hor)) allocate(sel(max(bnda%hor(il0)%n,1)))
+if (allocated(bnda%hor)) allocate(sel(bnda%hor(il0)%n))
 
 linop%n_s = 0
 do i_dst=1,n_dst
