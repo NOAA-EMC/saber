@@ -107,7 +107,7 @@ background error:
             variables:
             - eastward_wind
             - northward_wind
-            saber central block:
+            group central block:
               saber block name: BUMP_NICAS
               read:
                 general:
@@ -123,7 +123,7 @@ background error:
             variables:
             - air_pressure_at_surface
             - air_horizontal_streamfunction
-            saber central block:
+            group central block:
               saber block name: BUMP_NICAS
               read:
                 general:
@@ -142,7 +142,6 @@ background error:
       covariance type: ensemble
       adjoint test: true
       square-root test: true
-      square-root tolerance: 1.0e-10
       ensemble:
         members from template:
           template:
@@ -186,7 +185,6 @@ background error:
       covariance type: ensemble
       adjoint test: true
       square-root test: true
-      square-root tolerance: 1.0e-10
       ensemble:
         members from template:
           template:
@@ -208,7 +206,7 @@ background error:
             variables:
             - eastward_wind
             - northward_wind
-            saber central block:
+            group central block:
               saber block name: BUMP_NICAS
               read:
                 general:
@@ -224,7 +222,7 @@ background error:
             variables:
             - air_pressure_at_surface
             - air_horizontal_streamfunction
-            saber central block:
+            group central block:
               saber block name: BUMP_NICAS
               read:
                 general:

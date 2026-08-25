@@ -110,7 +110,7 @@ background error:
               - eastward_wind
               - northward_wind
               value: 0.5
-            saber central block:
+            group central block:
               saber block name: BUMP_NICAS
               read:
                 general:
@@ -129,7 +129,6 @@ background error:
       covariance type: ensemble
       adjoint test: true
       square-root test: true
-      square-root tolerance: 1.0e-10
       ensemble:
         members from template:
           template:
@@ -181,7 +180,6 @@ background error:
       covariance type: ensemble
       adjoint test: true
       square-root test: true
-      square-root tolerance: 1.0e-10
       ensemble:
         members from template:
           template:
@@ -209,7 +207,7 @@ background error:
               - eastward_wind
               - northward_wind
               value: 0.5
-            saber central block:
+            group central block:
               saber block name: BUMP_NICAS
               read:
                 general:
