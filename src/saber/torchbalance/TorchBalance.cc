@@ -161,7 +161,6 @@ TorchBalance::TorchBalance(
                           << ": nInputLevels=" << entry.second.first
                           << " nOutputLevels=" << entry.second.second << std::endl;
       }
-<<<<<<< HEAD
     }
   }
 
@@ -174,8 +173,6 @@ TorchBalance::TorchBalance(
       nonLocalEmulators_.push_back(std::make_unique<TorchBalanceNonLocalEmulator>(
           innerGeometryData_, xb, emulator.path.value(), emulator.geometryTensors.value(),
           emulator.backgroundTensors.value()));
-=======
->>>>>>> develop
     }
   }
 
