@@ -353,7 +353,10 @@ torch::Tensor TorchBalanceNonLocalEmulator::makeBackgroundTensor(
   }
 
   const atlas::Field & field = xb[tensorName];
-  auto view = atlas::array::make_view<double, 2>(field);
+  atlas::Field exchanged = field.clone();
+  exchanged.set_dirty(true);
+  exchanged.haloExchange();
+  auto view = atlas::array::make_view<double, 2>(exchanged);
   const int nnodes = view.shape(0);
   const int nlevels = view.shape(1);
 
