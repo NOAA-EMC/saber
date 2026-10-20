@@ -15,8 +15,8 @@
 
 #include "oops/base/Variables.h"
 
-#include "saber/blocks/SaberBlockParametersBase.h"
-#include "saber/blocks/SaberOuterBlockBase.h"
+#include "saber/blocks/BlockParametersBase.h"
+#include "saber/blocks/OuterBlockBase.h"
 
 
 // --------------------------------------------------------------------------------------
@@ -57,8 +57,8 @@ class NonLocalEmulatorParameters : public oops::Parameters {
     "background tensors", std::vector<std::string>(), this};
 };
 
-class TorchBalanceParameters : public saber::SaberBlockParametersBase {
-  OOPS_CONCRETE_PARAMETERS(TorchBalanceParameters, saber::SaberBlockParametersBase)
+class TorchBalanceParameters : public saber::BlockParametersBase {
+  OOPS_CONCRETE_PARAMETERS(TorchBalanceParameters, saber::BlockParametersBase)
  public:
   oops::Variables mandatoryActiveVars() const override {
     // No mandatory variables - fully generic and configuration-driven
@@ -77,7 +77,7 @@ class TorchBalanceParameters : public saber::SaberBlockParametersBase {
 
 // --------------------------------------------------------------------------------------
 
-class TorchBalance : public SaberOuterBlockBase {
+class TorchBalance : public OuterBlockBase {
  public:
   static const std::string classname() { return "saber::TorchBalance"; }
   typedef TorchBalanceParameters Parameters_;

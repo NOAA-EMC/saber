@@ -19,8 +19,8 @@
 #include "oops/base/Variables.h"
 #include "oops/util/parameters/Parameters.h"
 
-#include "saber/blocks/SaberBlockParametersBase.h"
-#include "saber/blocks/SaberOuterBlockBase.h"
+#include "saber/blocks/BlockParametersBase.h"
+#include "saber/blocks/OuterBlockBase.h"
 
 namespace saber {
 namespace generic {
@@ -56,8 +56,8 @@ class StdDevWriteParameters : public oops::Parameters {
 
 // -----------------------------------------------------------------------------
 
-class StdDevParameters : public SaberBlockParametersBase {
-  OOPS_CONCRETE_PARAMETERS(StdDevParameters, SaberBlockParametersBase)
+class StdDevParameters : public BlockParametersBase {
+  OOPS_CONCRETE_PARAMETERS(StdDevParameters, BlockParametersBase)
 
  public:
   // Read parameters
@@ -67,7 +67,7 @@ class StdDevParameters : public SaberBlockParametersBase {
   oops::OptionalParameter<StdDevWriteParameters> calibrationParams{"calibration", this};
 
   // Scaling parameter
-  oops::Parameter<double> scaleFactorParam{"stddev scale factor",
+  oops::Parameter<double> scaleFactorParam{"scale factor",
                                            "multiplicative factor applied to StdDev block",
                                            1.0, this, {oops::exclusiveMinConstraint(0.)}};
 
@@ -79,7 +79,7 @@ class StdDevParameters : public SaberBlockParametersBase {
 
 // -----------------------------------------------------------------------------
 
-class StdDev : public SaberOuterBlockBase {
+class StdDev : public OuterBlockBase {
  public:
   static const std::string classname() {return "saber::generic::StdDev";}
 
@@ -102,6 +102,7 @@ class StdDev : public SaberOuterBlockBase {
     {inverseMultiply(fset);}
   void rightInverseMultiply(oops::FieldSet3D & fset) const override
     {inverseMultiply(fset);}
+  void variance(oops::FieldSet3D &) const override;
 
   std::vector<std::pair<std::string, eckit::LocalConfiguration>> getReadConfs() const override;
   void setReadFields(const std::vector<oops::FieldSet3D> &) override;
